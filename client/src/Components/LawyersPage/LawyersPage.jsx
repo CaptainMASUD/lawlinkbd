@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
+import { useSelector } from "react-redux";
 import {
   Search,
   RefreshCcw,
@@ -18,12 +19,19 @@ import {
   Clock,
   Filter,
   Eye,
-  MessageCircle,
   X,
   CalendarDays,
 } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:4000/api";
+// JSON i18n file
+import lawyersI18n from "../../json/lawyers.json";
+
+const normalizeApiBaseUrl = (value = "") => {
+  const cleanBase = String(value || "http://localhost:4000").replace(/\/$/, "");
+  return cleanBase.endsWith("/api") ? cleanBase : `${cleanBase}/api`;
+};
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 
 const LAWYER_SPECIALIZATIONS = [
   "Family Law",
@@ -58,12 +66,22 @@ const getInitials = (name = "") => {
     .toUpperCase();
 };
 
-const LawyerImage = ({ lawyer }) => {
+const getTranslatedSpecialization = (value, t) => {
+  if (!value) return "";
+  return t.specializations?.[value] || value;
+};
+
+const getTranslatedAvailability = (value, t) => {
+  if (!value) return "";
+  return t.availability?.[value] || value;
+};
+
+const LawyerImage = ({ lawyer, t }) => {
   if (lawyer?.profileImage) {
     return (
       <img
         src={lawyer.profileImage}
-        alt={lawyer?.name || "Lawyer profile"}
+        alt={lawyer?.name || t.meta.profileAlt}
         className="h-24 w-24 rounded-[28px] object-cover ring-4 ring-white shadow-sm"
       />
     );
@@ -76,18 +94,18 @@ const LawyerImage = ({ lawyer }) => {
   );
 };
 
-const EmptyState = ({ onReset }) => (
+const EmptyState = ({ onReset, t }) => (
   <div className="rounded-[32px] border border-slate-200 bg-white p-10 text-center shadow-sm">
     <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 text-slate-400">
       <UserRound className="h-8 w-8" />
     </div>
 
     <h3 className="mt-5 text-2xl font-black text-slate-950">
-      No lawyers found
+      {t.empty.title}
     </h3>
 
     <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-      No approved lawyer matched your current search or filter options.
+      {t.empty.description}
     </p>
 
     <button
@@ -96,12 +114,12 @@ const EmptyState = ({ onReset }) => (
       className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-700 px-5 py-3 text-sm font-black text-white transition hover:bg-cyan-800"
     >
       <RefreshCcw className="h-4 w-4" />
-      Clear Filters
+      {t.empty.clearFilters}
     </button>
   </div>
 );
 
-const LawyerCard = ({ lawyer, index }) => {
+const LawyerCard = ({ lawyer, index, t }) => {
   const navigate = useNavigate();
 
   const lawyerId = lawyer?._id || lawyer?.id || index;
@@ -128,12 +146,12 @@ const LawyerCard = ({ lawyer, index }) => {
           {lawyer?.isVerifiedLawyer ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
               <BadgeCheck className="h-3.5 w-3.5" />
-              Verified
+              {t.card.verified}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700 ring-1 ring-amber-100">
               <Clock className="h-3.5 w-3.5" />
-              Pending
+              {t.card.pending}
             </span>
           )}
         </div>
@@ -144,17 +162,17 @@ const LawyerCard = ({ lawyer, index }) => {
               <Lock className="h-8 w-8" />
             </div>
           ) : (
-            <LawyerImage lawyer={lawyer} />
+            <LawyerImage lawyer={lawyer} t={t} />
           )}
 
           <div className="min-w-0 pt-1">
             <h2 className="line-clamp-2 text-xl font-black tracking-tight text-slate-950">
-              {lawyer?.name || "Unnamed Lawyer"}
+              {lawyer?.name || t.card.unnamedLawyer}
             </h2>
 
             <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-black text-slate-700 ring-1 ring-slate-200">
               <MapPin className="h-3.5 w-3.5 text-cyan-700" />
-              {cityLocked ? "Locked" : lawyer?.city || "Not set"}
+              {cityLocked ? t.card.locked : lawyer?.city || t.card.notSet}
             </p>
           </div>
         </div>
@@ -171,30 +189,31 @@ const LawyerCard = ({ lawyer, index }) => {
           <div className="rounded-3xl border border-cyan-100 bg-cyan-50/60 p-4">
             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-cyan-700">
               <ShieldCheck className="h-4 w-4" />
-              Practice Area
+              {t.card.practiceArea}
             </div>
 
             <p className="mt-2 truncate text-sm font-black text-slate-950">
-              {lawyer?.specialization || "Legal Consultant"}
+              {getTranslatedSpecialization(lawyer?.specialization, t) ||
+                t.card.legalConsultant}
             </p>
           </div>
 
           <div className="rounded-3xl border border-cyan-100 bg-cyan-50/60 p-4">
             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-cyan-700">
               <BriefcaseBusiness className="h-4 w-4" />
-              Experience
+              {t.card.experience}
             </div>
 
             <p className="mt-2 truncate text-sm font-black text-slate-950">
-              {Number(lawyer?.experienceYears || 0)} Years
+              {Number(lawyer?.experienceYears || 0)} {t.card.years}
             </p>
           </div>
         </div>
 
-        {!hasFullAccess && access?.message && (
+        {!hasFullAccess && (
           <div className="flex gap-3 rounded-3xl border border-amber-100 bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-800">
             <Lock className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{access.message}</span>
+            <span>{t.card.lockedMessage}</span>
           </div>
         )}
 
@@ -204,7 +223,7 @@ const LawyerCard = ({ lawyer, index }) => {
           className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-700 px-5 py-4 text-sm font-black text-white transition hover:bg-cyan-800"
         >
           <CalendarDays className="h-4 w-4" />
-          View Details & Book
+          {t.card.viewDetailsBook}
         </button>
       </div>
     </motion.article>
@@ -212,6 +231,13 @@ const LawyerCard = ({ lawyer, index }) => {
 };
 
 export default function LawyersPage() {
+  const currentLanguage = useSelector(
+    (state) => state.language?.currentLanguage || "en"
+  );
+
+  const t =
+    lawyersI18n[currentLanguage]?.lawyers || lawyersI18n.en.lawyers;
+
   const [lawyers, setLawyers] = useState([]);
   const [search, setSearch] = useState("");
   const [subscriptionStatus, setSubscriptionStatus] = useState("all");
@@ -255,11 +281,15 @@ export default function LawyersPage() {
     params.set("sortBy", sortBy);
 
     if (search.trim()) params.set("search", search.trim());
-    if (subscriptionStatus !== "all") params.set("subscriptionStatus", subscriptionStatus);
+    if (subscriptionStatus !== "all") {
+      params.set("subscriptionStatus", subscriptionStatus);
+    }
     if (specialization !== "all") params.set("specialization", specialization);
     if (availability !== "all") params.set("availability", availability);
     if (minExperience !== "") params.set("minExperience", minExperience);
-    if (maxConsultationFee !== "") params.set("maxConsultationFee", maxConsultationFee);
+    if (maxConsultationFee !== "") {
+      params.set("maxConsultationFee", maxConsultationFee);
+    }
 
     return params;
   }, [
@@ -300,7 +330,7 @@ export default function LawyersPage() {
         const result = await res.json();
 
         if (!res.ok || !result.success) {
-          throw new Error(result.message || "Failed to fetch lawyers");
+          throw new Error(result.message || t.messages.fetchFailed);
         }
 
         const newData = Array.isArray(result.data) ? result.data : [];
@@ -310,13 +340,13 @@ export default function LawyersPage() {
         setHasNextPage(Boolean(result?.meta?.hasNextPage));
         setFullAccess(Boolean(result?.meta?.lawyerDetailAccess));
       } catch (err) {
-        setError(err.message || "Something went wrong");
+        setError(err.message || t.messages.somethingWrong);
       } finally {
         setLoading(false);
         setLoadingMore(false);
       }
     },
-    [queryParams]
+    [queryParams, t.messages.fetchFailed, t.messages.somethingWrong]
   );
 
   useEffect(() => {
@@ -349,11 +379,11 @@ export default function LawyersPage() {
           >
             <span className="inline-flex items-center gap-2 rounded-full border border-cyan-100 bg-cyan-50 px-3.5 py-1.5 text-xs font-black text-cyan-700">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Verified Lawyers Only
+              {t.header.badge}
             </span>
 
             <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl md:text-5xl">
-              Find the Right Lawyer for Your Case
+              {t.header.title}
             </h1>
 
             <div className="mx-auto mt-7 flex max-w-3xl items-center gap-3">
@@ -364,7 +394,7 @@ export default function LawyersPage() {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name, city, specialization..."
+                  placeholder={t.header.searchPlaceholder}
                   className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                 />
               </div>
@@ -377,9 +407,13 @@ export default function LawyersPage() {
                     ? "border-cyan-600 bg-cyan-700 text-white shadow-lg shadow-cyan-700/20"
                     : "border-slate-200 bg-slate-50 text-slate-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
                 }`}
-                aria-label="Toggle filters"
+                aria-label={t.filters.toggle}
               >
-                {showFilters ? <X className="h-4 w-4" /> : <Filter className="h-4 w-4" />}
+                {showFilters ? (
+                  <X className="h-4 w-4" />
+                ) : (
+                  <Filter className="h-4 w-4" />
+                )}
 
                 {activeFilterCount > 0 && (
                   <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-cyan-700 px-1.5 text-[10px] font-black text-white ring-2 ring-white">
@@ -391,11 +425,13 @@ export default function LawyersPage() {
 
             <div className="mt-4 flex flex-col items-center justify-center gap-3 text-xs font-bold text-slate-500 sm:flex-row">
               <span>
-                Showing{" "}
+                {t.header.showing}{" "}
                 <span className="font-black text-slate-950">
                   {lawyers.length}
                 </span>{" "}
-                approved lawyer{lawyers.length !== 1 ? "s" : ""}
+                {lawyers.length === 1
+                  ? t.header.approvedLawyerSingular
+                  : t.header.approvedLawyerPlural}
               </span>
 
               <span className="hidden h-1.5 w-1.5 rounded-full bg-slate-300 sm:block" />
@@ -403,12 +439,12 @@ export default function LawyersPage() {
               {fullAccess ? (
                 <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
                   <Eye className="h-3.5 w-3.5" />
-                  Full lawyer details unlocked
+                  {t.header.fullAccess}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3.5 py-1.5 text-xs font-black text-amber-700 ring-1 ring-amber-100">
                   <Lock className="h-3.5 w-3.5" />
-                  Contact details may be locked
+                  {t.header.lockedAccess}
                 </span>
               )}
             </div>
@@ -430,10 +466,10 @@ export default function LawyersPage() {
                 <div className="mb-5 flex flex-col gap-3 border-b border-slate-100 pb-5 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-base font-black text-slate-950">
-                      Filter Lawyers
+                      {t.filters.title}
                     </h2>
                     <p className="mt-1 text-xs font-medium text-slate-500">
-                      Choose filters to narrow down the approved lawyers list.
+                      {t.filters.description}
                     </p>
                   </div>
 
@@ -443,7 +479,7 @@ export default function LawyersPage() {
                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
                   >
                     <RefreshCcw className="h-3.5 w-3.5" />
-                    Reset Filters
+                    {t.filters.reset}
                   </button>
                 </div>
 
@@ -453,10 +489,10 @@ export default function LawyersPage() {
                     onChange={(e) => setSpecialization(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="all">All Specializations</option>
+                    <option value="all">{t.filters.allSpecializations}</option>
                     {LAWYER_SPECIALIZATIONS.map((item) => (
                       <option key={item} value={item}>
-                        {item}
+                        {getTranslatedSpecialization(item, t)}
                       </option>
                     ))}
                   </select>
@@ -466,10 +502,10 @@ export default function LawyersPage() {
                     onChange={(e) => setAvailability(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="all">All Availability</option>
+                    <option value="all">{t.filters.allAvailability}</option>
                     {AVAILABILITY_OPTIONS.map((item) => (
                       <option key={item} value={item}>
-                        {item.charAt(0).toUpperCase() + item.slice(1)}
+                        {getTranslatedAvailability(item, t)}
                       </option>
                     ))}
                   </select>
@@ -479,11 +515,11 @@ export default function LawyersPage() {
                     onChange={(e) => setSortBy(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="recommended">Recommended</option>
-                    <option value="rating">Top Rated</option>
-                    <option value="experience">Most Experienced</option>
-                    <option value="feeLow">Lowest Fee</option>
-                    <option value="newest">Newest</option>
+                    <option value="recommended">{t.sort.recommended}</option>
+                    <option value="rating">{t.sort.rating}</option>
+                    <option value="experience">{t.sort.experience}</option>
+                    <option value="feeLow">{t.sort.feeLow}</option>
+                    <option value="newest">{t.sort.newest}</option>
                   </select>
 
                   <select
@@ -491,12 +527,14 @@ export default function LawyersPage() {
                     onChange={(e) => setSubscriptionStatus(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="all">All Plans</option>
-                    <option value="active">Active Plan</option>
-                    <option value="pending">Pending Plan</option>
-                    <option value="expired">Expired Plan</option>
-                    <option value="cancelled">Cancelled Plan</option>
-                    <option value="none">No Plan</option>
+                    <option value="all">{t.filters.allPlans}</option>
+                    <option value="active">{t.subscriptionStatus.active}</option>
+                    <option value="pending">{t.subscriptionStatus.pending}</option>
+                    <option value="expired">{t.subscriptionStatus.expired}</option>
+                    <option value="cancelled">
+                      {t.subscriptionStatus.cancelled}
+                    </option>
+                    <option value="none">{t.subscriptionStatus.none}</option>
                   </select>
 
                   <div className="relative">
@@ -506,7 +544,7 @@ export default function LawyersPage() {
                       min="0"
                       value={minExperience}
                       onChange={(e) => setMinExperience(e.target.value)}
-                      placeholder="Minimum experience years"
+                      placeholder={t.filters.minExperiencePlaceholder}
                       className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                     />
                   </div>
@@ -521,7 +559,7 @@ export default function LawyersPage() {
                       min="0"
                       value={maxConsultationFee}
                       onChange={(e) => setMaxConsultationFee(e.target.value)}
-                      placeholder="Maximum consultation fee"
+                      placeholder={t.filters.maxFeePlaceholder}
                       className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                     />
                   </div>
@@ -539,7 +577,7 @@ export default function LawyersPage() {
               <div className="text-center">
                 <Loader2 className="mx-auto mb-4 h-11 w-11 animate-spin text-cyan-700" />
                 <p className="text-sm font-black text-slate-600">
-                  Loading approved lawyers...
+                  {t.loading.lawyers}
                 </p>
               </div>
             </div>
@@ -548,7 +586,7 @@ export default function LawyersPage() {
               <AlertCircle className="mx-auto mb-4 h-11 w-11 text-rose-500" />
 
               <h3 className="mb-2 text-xl font-black text-rose-700">
-                Failed to load lawyers
+                {t.error.title}
               </h3>
 
               <p className="mb-5 text-sm font-semibold text-rose-600">
@@ -560,11 +598,11 @@ export default function LawyersPage() {
                 onClick={() => fetchLawyers()}
                 className="rounded-2xl bg-rose-600 px-5 py-3 text-sm font-black text-white transition hover:bg-rose-700"
               >
-                Try Again
+                {t.error.tryAgain}
               </button>
             </div>
           ) : lawyers.length === 0 ? (
-            <EmptyState onReset={handleReset} />
+            <EmptyState onReset={handleReset} t={t} />
           ) : (
             <>
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
@@ -573,6 +611,7 @@ export default function LawyersPage() {
                     key={lawyer?._id || lawyer?.id || index}
                     lawyer={lawyer}
                     index={index}
+                    t={t}
                   />
                 ))}
               </div>
@@ -593,11 +632,11 @@ export default function LawyersPage() {
                     {loadingMore ? (
                       <>
                         <Loader2 className="h-5 w-5 animate-spin" />
-                        Loading...
+                        {t.loading.more}
                       </>
                     ) : (
                       <>
-                        Load More Lawyers
+                        {t.actions.loadMore}
                         <ArrowRight className="h-5 w-5" />
                       </>
                     )}

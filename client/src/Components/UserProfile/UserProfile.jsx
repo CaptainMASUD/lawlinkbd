@@ -31,6 +31,7 @@ import {
   FaComments,
   FaPaperclip,
   FaLock,
+  FaCamera,
 } from "react-icons/fa";
 import {
   MdVerifiedUser,
@@ -39,7 +40,16 @@ import {
 } from "react-icons/md";
 import { RiProfileLine } from "react-icons/ri";
 
-const API_BASE_URL = "http://localhost:4000/api";
+import userProfileI18n from "../../json/userProfile.json";
+
+const normalizeApiBaseUrl = (baseUrl = "") => {
+  const cleanBaseUrl = String(baseUrl || "").replace(/\/+$/, "");
+
+  if (!cleanBaseUrl) return "/api";
+  return cleanBaseUrl.endsWith("/api") ? cleanBaseUrl : `${cleanBaseUrl}/api`;
+};
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 
 const GOOGLE_DRIVE_HOSTS = ["drive.google.com"];
 
@@ -109,28 +119,65 @@ const getStoredAuth = () => {
   return { user, token };
 };
 
-const formatDate = (dateString) => {
-  if (!dateString) return "Not available";
+const updateStoredAuthUser = (updatedUser) => {
+  if (!updatedUser) return;
+
+  try {
+    const localUser = localStorage.getItem("currentUser");
+    const sessionUser = sessionStorage.getItem("currentUser");
+
+    if (localUser) {
+      const currentUser = JSON.parse(localUser);
+      localStorage.setItem(
+        "currentUser",
+        JSON.stringify({ ...currentUser, ...updatedUser })
+      );
+      return;
+    }
+
+    if (sessionUser) {
+      const currentUser = JSON.parse(sessionUser);
+      sessionStorage.setItem(
+        "currentUser",
+        JSON.stringify({ ...currentUser, ...updatedUser })
+      );
+    }
+  } catch (error) {
+    console.error("Stored auth update error:", error);
+  }
+};
+
+const buildProfileImagePreview = (file) => {
+  if (!file) return "";
+  return URL.createObjectURL(file);
+};
+
+const formatDate = (dateString, locale = "en-BD", fallback = "Not available") => {
+  if (!dateString) return fallback;
 
   const date = new Date(dateString);
 
-  if (Number.isNaN(date.getTime())) return "Not available";
+  if (Number.isNaN(date.getTime())) return fallback;
 
-  return date.toLocaleDateString("en-BD", {
+  return date.toLocaleDateString(locale, {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 };
 
-const formatDateTime = (dateString) => {
-  if (!dateString) return "Not available";
+const formatDateTime = (
+  dateString,
+  locale = "en-BD",
+  fallback = "Not available"
+) => {
+  if (!dateString) return fallback;
 
   const date = new Date(dateString);
 
-  if (Number.isNaN(date.getTime())) return "Not available";
+  if (Number.isNaN(date.getTime())) return fallback;
 
-  return date.toLocaleString("en-BD", {
+  return date.toLocaleString(locale, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -139,14 +186,31 @@ const formatDateTime = (dateString) => {
   });
 };
 
-const formatCurrency = (value, currency = "BDT") => {
+const formatCurrency = (value, currency = "BDT", locale = "en-BD") => {
   const amount = Number(value || 0);
 
-  return new Intl.NumberFormat("en-BD", {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
     maximumFractionDigits: 0,
   }).format(amount);
+};
+
+const replaceTemplate = (text = "", values = {}) => {
+  return Object.entries(values).reduce((result, [key, value]) => {
+    return result.replaceAll(`{{${key}}}`, value);
+  }, text);
+};
+
+const getStatusLabel = (status, t) => {
+  const value = String(status || "").toLowerCase();
+  return (
+    t?.status?.[value] ||
+    t?.roles?.[value] ||
+    t?.common?.[value] ||
+    status ||
+    t?.common?.unknown
+  );
 };
 
 const getInitials = (name = "") => {
@@ -237,15 +301,15 @@ const getBidBadgeStyle = (status) => {
   }
 };
 
-const getFeatureDisplayValue = (value) => {
-  if (typeof value === "boolean") return value ? "Yes" : "No";
+const getFeatureDisplayValue = (value, t) => {
+  if (typeof value === "boolean") return value ? t.common.yes : t.common.no;
 
   if (typeof value === "number") {
-    if (value === 999999 || value === 9999) return "Unlimited";
+    if (value === 999999 || value === 9999) return t.common.unlimited;
     return value.toLocaleString();
   }
 
-  return value || "-";
+  return value || t.common.dash;
 };
 
 const getOtherUserFromConnection = (connection, user) => {
@@ -273,18 +337,22 @@ const isBookingBasedConnection = (connection) => {
   );
 };
 
-const getConnectionTitle = (connection) => {
+const getConnectionTitle = (connection, t) => {
   if (isBookingBasedConnection(connection)) {
-    return connection?.booking?.subject || "Appointment conversation";
+    return connection?.booking?.subject || t.chat.appointmentConversation;
   }
 
-  return connection?.post?.title || "Case conversation";
+  return connection?.post?.title || t.chat.caseConversation;
 };
 
-const getConnectionSubtitle = (connection) => {
+const getConnectionSubtitle = (connection, t, locale) => {
   if (isBookingBasedConnection(connection)) {
-    const date = formatDate(connection?.booking?.requestedDate);
-    const time = connection?.booking?.requestedTime || "Time not set";
+    const date = formatDate(
+      connection?.booking?.requestedDate,
+      locale,
+      t.common.notAvailable
+    );
+    const time = connection?.booking?.requestedTime || t.chat.timeNotSet;
     const type = formatConsultationType(
       connection?.booking?.consultationType || "online"
     );
@@ -292,7 +360,7 @@ const getConnectionSubtitle = (connection) => {
     return `${date} • ${time} • ${type}`;
   }
 
-  return connection?.post?.category || "Legal case chat";
+  return connection?.post?.category || t.chat.legalCaseChat;
 };
 
 const extractAttachmentLinks = (value = "") => {
@@ -341,7 +409,7 @@ const isSocialMediaLink = (value = "") => {
   );
 };
 
-const validateAttachmentLinks = (value = "") => {
+const validateAttachmentLinks = (value = "", t) => {
   const links = extractAttachmentLinks(value);
 
   if (links.length === 0) {
@@ -357,7 +425,7 @@ const validateAttachmentLinks = (value = "") => {
       return {
         valid: false,
         links: [],
-        message: "Phone numbers cannot be shared as attachments.",
+        message: t.validation.phoneAttachment,
       };
     }
 
@@ -365,8 +433,7 @@ const validateAttachmentLinks = (value = "") => {
       return {
         valid: false,
         links: [],
-        message:
-          "Social media links are not allowed. Only Google Drive links can be shared.",
+        message: t.validation.socialAttachment,
       };
     }
 
@@ -374,7 +441,7 @@ const validateAttachmentLinks = (value = "") => {
       return {
         valid: false,
         links: [],
-        message: "Only Google Drive links are allowed as attachments.",
+        message: t.validation.driveAttachmentOnly,
       };
     }
   }
@@ -386,7 +453,7 @@ const validateAttachmentLinks = (value = "") => {
   };
 };
 
-const validateChatMessageText = (value = "") => {
+const validateChatMessageText = (value = "", t) => {
   const text = String(value || "").trim();
 
   BANGLADESH_PHONE_REGEX.lastIndex = 0;
@@ -396,7 +463,7 @@ const validateChatMessageText = (value = "") => {
   if (!text) {
     return {
       valid: false,
-      message: "Message is required.",
+      message: t.validation.messageRequired,
     };
   }
 
@@ -405,8 +472,7 @@ const validateChatMessageText = (value = "") => {
 
     return {
       valid: false,
-      message:
-        "Phone numbers or payment numbers cannot be shared in chat. Please use the platform conversation only.",
+      message: t.validation.phoneBlocked,
     };
   }
 
@@ -420,8 +486,7 @@ const validateChatMessageText = (value = "") => {
     if (digitsOnly.length >= 7 && digitsOnly.length <= 15) {
       return {
         valid: false,
-        message:
-          "Phone numbers or payment numbers cannot be shared in chat. Please use the platform conversation only.",
+        message: t.validation.phoneBlocked,
       };
     }
   }
@@ -429,8 +494,7 @@ const validateChatMessageText = (value = "") => {
   if (PAYMENT_KEYWORDS_REGEX.test(text) || BDT_PAYMENT_TEXT_REGEX.test(text)) {
     return {
       valid: false,
-      message:
-        "Payment numbers, BDT payment details, bKash, Nagad, Rocket, or similar payment information cannot be shared in chat.",
+      message: t.validation.paymentBlocked,
     };
   }
 
@@ -440,16 +504,14 @@ const validateChatMessageText = (value = "") => {
     if (isSocialMediaLink(url)) {
       return {
         valid: false,
-        message:
-          "Social media links are not allowed in chat. Facebook, Instagram, WhatsApp, Telegram, LinkedIn, Twitter/X, YouTube, and TikTok links are blocked.",
+        message: t.validation.socialBlocked,
       };
     }
 
     if (!isGoogleDriveLink(url)) {
       return {
         valid: false,
-        message:
-          "External links are not allowed in chat. Only Google Drive links can be shared using the attachment option.",
+        message: t.validation.externalBlocked,
       };
     }
   }
@@ -459,8 +521,7 @@ const validateChatMessageText = (value = "") => {
 
     return {
       valid: false,
-      message:
-        "Social media handles are not allowed in chat. Please continue communication inside the platform.",
+      message: t.validation.handleBlocked,
     };
   }
 
@@ -474,6 +535,11 @@ const validateChatMessageText = (value = "") => {
 
 const UserProfile = () => {
   const reduxUser = useSelector((state) => state.user.currentUser);
+  const currentLanguage = useSelector((state) => state.language.currentLanguage);
+  const t =
+    userProfileI18n[currentLanguage]?.userProfile ||
+    userProfileI18n.en.userProfile;
+  const locale = currentLanguage === "bn" ? "bn-BD" : "en-BD";
 
   const [authUser, setAuthUser] = useState(null);
   const [token, setToken] = useState("");
@@ -507,6 +573,18 @@ const UserProfile = () => {
   const [successMessage, setSuccessMessage] = useState("");
   const [error, setError] = useState("");
 
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [updatingProfile, setUpdatingProfile] = useState(false);
+  const [editProfileForm, setEditProfileForm] = useState({
+    name: "",
+    phone: "",
+    city: "",
+    officeAddress: "",
+    bio: "",
+    profileImage: null,
+  });
+  const [profilePreview, setProfilePreview] = useState("");
+
   useEffect(() => {
     const storedAuth = getStoredAuth();
 
@@ -530,6 +608,146 @@ const UserProfile = () => {
       Authorization: `Bearer ${token}`,
     };
   }, [token]);
+
+  const fileAuthHeaders = useMemo(() => {
+    if (!token) return {};
+
+    return {
+      Authorization: `Bearer ${token}`,
+    };
+  }, [token]);
+
+  const openEditProfileModal = useCallback(() => {
+    setError("");
+    setSuccessMessage("");
+    setEditProfileForm({
+      name: user?.name || "",
+      phone: user?.phone || "",
+      city: user?.city || "",
+      officeAddress: user?.officeAddress || "",
+      bio: user?.bio || "",
+      profileImage: null,
+    });
+    setProfilePreview(user?.profileImage || "");
+    setShowEditProfile(true);
+  }, [user]);
+
+  const closeEditProfileModal = useCallback(() => {
+    setShowEditProfile(false);
+    setEditProfileForm({
+      name: "",
+      phone: "",
+      city: "",
+      officeAddress: "",
+      bio: "",
+      profileImage: null,
+    });
+    setProfilePreview("");
+  }, []);
+
+  const handleEditProfileChange = useCallback((field, value) => {
+    setEditProfileForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  }, []);
+
+  const handleEditProfileImageChange = useCallback((file) => {
+    if (!file) return;
+
+    const previewUrl = buildProfileImagePreview(file);
+
+    setEditProfileForm((prev) => ({
+      ...prev,
+      profileImage: file,
+    }));
+    setProfilePreview(previewUrl);
+  }, []);
+
+  const handleUpdateProfile = useCallback(
+    async (e) => {
+      e.preventDefault();
+
+      if (!token) {
+        setError(t.messages.loginMissing);
+        return;
+      }
+
+      if (user?.role !== "client") {
+        setError(t.editProfile.clientOnlyError);
+        return;
+      }
+
+      const cleanName = String(editProfileForm.name || "").trim();
+      const cleanPhone = String(editProfileForm.phone || "").trim();
+
+      if (!cleanName) {
+        setError(t.editProfile.nameRequired);
+        return;
+      }
+
+      if (!cleanPhone) {
+        setError(t.editProfile.phoneRequired);
+        return;
+      }
+
+      try {
+        setUpdatingProfile(true);
+        setError("");
+        setSuccessMessage("");
+
+        const formData = new FormData();
+        formData.append("name", cleanName);
+        formData.append("phone", cleanPhone);
+        formData.append("city", String(editProfileForm.city || "").trim());
+        formData.append(
+          "officeAddress",
+          String(editProfileForm.officeAddress || "").trim()
+        );
+        formData.append("bio", String(editProfileForm.bio || "").trim());
+
+        if (editProfileForm.profileImage) {
+          formData.append("profileImage", editProfileForm.profileImage);
+        }
+
+        const res = await fetch(`${API_BASE_URL}/users/profile`, {
+          method: "PATCH",
+          headers: fileAuthHeaders,
+          credentials: "include",
+          body: formData,
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.message || t.editProfile.updateFailed);
+        }
+
+        const updatedUser = data.data || null;
+
+        if (updatedUser) {
+          setAuthUser((prev) => ({ ...prev, ...updatedUser }));
+          updateStoredAuthUser(updatedUser);
+        }
+
+        setSuccessMessage(data.message || t.editProfile.updateSuccess);
+        closeEditProfileModal();
+      } catch (err) {
+        setError(err.message || t.editProfile.updateFailed);
+      } finally {
+        setUpdatingProfile(false);
+      }
+    },
+    [
+      token,
+      user?.role,
+      editProfileForm,
+      fileAuthHeaders,
+      closeEditProfileModal,
+      t.messages.loginMissing,
+      t.editProfile,
+    ]
+  );
 
   const fetchActiveSubscription = useCallback(async () => {
     if (!token) return;
@@ -710,7 +928,7 @@ const UserProfile = () => {
         fetchMyAppointments(),
       ]);
     } catch {
-      setError("Failed to refresh profile data");
+      setError(t.messages.refreshProfileFailed);
     }
   }, [
     fetchActiveSubscription,
@@ -719,6 +937,7 @@ const UserProfile = () => {
     fetchConnections,
     fetchMyPosts,
     fetchMyAppointments,
+    t.messages,
   ]);
 
   useEffect(() => {
@@ -746,9 +965,9 @@ const UserProfile = () => {
     return (
       activeSubscription?.planName ||
       activeSubscription?.plan?.name ||
-      "No active plan"
+      t.common.notAvailable
     );
-  }, [activeSubscription]);
+  }, [activeSubscription, t.common.notAvailable]);
 
   const currentPlanPrice = useMemo(() => {
     if (!activeSubscription) return 0;
@@ -831,25 +1050,25 @@ const UserProfile = () => {
     const baseTabs = [
       {
         id: "overview",
-        label: "Overview",
+        label: t.tabs.overview,
         icon: <RiProfileLine />,
         count: null,
       },
       {
         id: "connections",
-        label: "Requests",
+        label: t.tabs.connections,
         icon: <FaHandshake />,
         count: pendingConnectionCount,
       },
       {
         id: "chat",
-        label: "Chat",
+        label: t.tabs.chat,
         icon: <FaComments />,
         count: acceptedAppointmentConnections.length,
       },
       {
         id: "appointments",
-        label: "Appointments",
+        label: t.tabs.appointments,
         icon: <FaCalendarAlt />,
         count: activeAppointmentCount,
       },
@@ -858,7 +1077,7 @@ const UserProfile = () => {
     if (user?.role === "client") {
       baseTabs.push({
         id: "proposals",
-        label: "Proposals",
+        label: t.tabs.proposals,
         icon: <FaPaperPlane />,
         count: pendingProposalCount,
       });
@@ -866,7 +1085,7 @@ const UserProfile = () => {
 
     baseTabs.push({
       id: "billing",
-      label: "Billing",
+      label: t.tabs.billing,
       icon: <FaCreditCard />,
       count: null,
     });
@@ -878,6 +1097,7 @@ const UserProfile = () => {
     pendingProposalCount,
     acceptedAppointmentConnections.length,
     activeAppointmentCount,
+    t.tabs,
   ]);
 
   const fetchConnectionMessages = useCallback(
@@ -900,7 +1120,7 @@ const UserProfile = () => {
         const data = await res.json();
 
         if (!res.ok || !data?.success) {
-          throw new Error(data?.message || "Failed to load messages");
+          throw new Error(data?.message || t.messages.loadMessagesFailed);
         }
 
         setChatMessages(data.data || []);
@@ -913,14 +1133,13 @@ const UserProfile = () => {
       } catch (err) {
         setChatMessages([]);
         setChatError(
-          err.message ||
-            "Unable to load chat. Please make sure your account has an active free or paid plan."
+          err.message || t.messages.chatLockedError
         );
       } finally {
         setLoadingMessages(false);
       }
     },
-    [token, authHeaders]
+    [token, authHeaders, t.messages]
   );
 
   useEffect(() => {
@@ -952,7 +1171,7 @@ const UserProfile = () => {
     if (!token || !bookingId) return;
 
     const confirmed = window.confirm(
-      "Are you sure you want to cancel this appointment?"
+      t.messages.cancelConfirm
     );
 
     if (!confirmed) return;
@@ -967,21 +1186,21 @@ const UserProfile = () => {
         headers: authHeaders,
         credentials: "include",
         body: JSON.stringify({
-          cancelReason: "Cancelled from user profile.",
+          cancelReason: t.messages.cancelReason,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to cancel appointment");
+        throw new Error(data?.message || t.messages.cancelFailed);
       }
 
-      setSuccessMessage(data.message || "Appointment cancelled successfully");
+      setSuccessMessage(data.message || t.messages.cancelSuccess);
       await fetchMyAppointments();
       await fetchConnections();
     } catch (err) {
-      setError(err.message || "Failed to cancel appointment");
+      setError(err.message || t.messages.cancelFailed);
     } finally {
       setActionLoadingId("");
     }
@@ -1004,8 +1223,8 @@ const UserProfile = () => {
           body: JSON.stringify({
             responseMessage:
               action === "accept"
-                ? "Connection request accepted."
-                : "Connection request rejected.",
+                ? t.messages.connectionAccepted
+                : t.messages.connectionRejected,
           }),
         }
       );
@@ -1013,10 +1232,10 @@ const UserProfile = () => {
       const data = await res.json();
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.message || `Failed to ${action} connection`);
+        throw new Error(data?.message || replaceTemplate(t.messages.connectionActionFailed, { action }));
       }
 
-      setSuccessMessage(data.message || `Connection ${action}ed successfully`);
+      setSuccessMessage(data.message || replaceTemplate(t.messages.connectionActionSuccess, { action }));
       await fetchConnections();
 
       if (action === "accept") {
@@ -1024,7 +1243,7 @@ const UserProfile = () => {
         setActiveTab("chat");
       }
     } catch (err) {
-      setError(err.message || `Failed to ${action} connection`);
+      setError(err.message || replaceTemplate(t.messages.connectionActionFailed, { action }));
     } finally {
       setActionLoadingId("");
     }
@@ -1050,15 +1269,15 @@ const UserProfile = () => {
       const data = await res.json();
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to accept proposal");
+        throw new Error(data?.message || t.messages.proposalAcceptFailed);
       }
 
-      setSuccessMessage(data.message || "Proposal accepted successfully");
+      setSuccessMessage(data.message || t.messages.proposalAcceptSuccess);
       await fetchMyPosts();
       await fetchConnections();
       setActiveTab("chat");
     } catch (err) {
-      setError(err.message || "Failed to accept proposal");
+      setError(err.message || t.messages.proposalAcceptFailed);
     } finally {
       setActionLoadingId("");
     }
@@ -1068,18 +1287,18 @@ const UserProfile = () => {
     e.preventDefault();
 
     if (!token || !selectedChatConnectionId) {
-      setChatError("Please select a conversation first.");
+      setChatError(t.messages.selectConversationFirst);
       return;
     }
 
-    const messageValidation = validateChatMessageText(chatMessage);
+    const messageValidation = validateChatMessageText(chatMessage, t);
 
     if (!messageValidation.valid) {
       setChatError(messageValidation.message);
       return;
     }
 
-    const attachmentValidation = validateAttachmentLinks(chatAttachments);
+    const attachmentValidation = validateAttachmentLinks(chatAttachments, t);
 
     if (!attachmentValidation.valid) {
       setChatError(attachmentValidation.message);
@@ -1106,7 +1325,7 @@ const UserProfile = () => {
       const data = await res.json();
 
       if (!res.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to send message");
+        throw new Error(data?.message || t.messages.sendMessageFailed);
       }
 
       setChatMessage("");
@@ -1119,8 +1338,7 @@ const UserProfile = () => {
       await fetchConnections();
     } catch (err) {
       setChatError(
-        err.message ||
-          "Unable to send message. Please make sure your account has an active free or paid plan."
+        err.message || t.messages.sendMessageLocked
       );
     } finally {
       setSendingMessage(false);
@@ -1140,11 +1358,11 @@ const UserProfile = () => {
           </div>
 
           <h2 className="mt-6 text-3xl font-bold text-slate-800">
-            No User Found
+            {t.messages.noUserTitle}
           </h2>
 
           <p className="mt-3 text-base leading-relaxed text-slate-500">
-            Please sign in first to view your profile dashboard.
+            {t.messages.noUserDesc}
           </p>
         </motion.div>
       </div>
@@ -1169,25 +1387,33 @@ const UserProfile = () => {
               <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
                 <motion.div
                   whileHover={{ scale: 1.05 }}
-                  className="flex h-28 w-28 items-center justify-center rounded-full border border-white/30 bg-white/20 text-3xl font-bold text-white shadow-xl backdrop-blur-md md:h-32 md:w-32 md:text-4xl"
+                  className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border border-white/30 bg-white/20 text-3xl font-bold text-white shadow-xl backdrop-blur-md md:h-32 md:w-32 md:text-4xl"
                 >
-                  {getInitials(user?.name)}
+                  {user?.profileImage ? (
+                    <img
+                      src={user.profileImage}
+                      alt={user?.name || t.common.unnamedUser}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    getInitials(user?.name)
+                  )}
                 </motion.div>
 
                 <div className="text-white">
                   <div className="mb-3 flex flex-wrap items-center gap-3">
                     <h1 className="text-3xl font-extrabold tracking-tight md:text-4xl">
-                      {user?.name || "Unnamed User"}
+                      {user?.name || t.common.unnamedUser}
                     </h1>
 
                     <span className="rounded-full border border-white/20 bg-white/15 px-4 py-1.5 text-sm font-semibold capitalize backdrop-blur-md">
-                      {user?.role || "client"}
+                      {getStatusLabel(user?.role || "client", t)}
                     </span>
                   </div>
 
                   <p className="flex items-center gap-2 text-base text-white/90 md:text-lg">
                     <FaEnvelope className="text-white/90" />
-                    {user?.email || "No email available"}
+                    {user?.email || t.common.notAvailable}
                   </p>
 
                   <div className="mt-5 flex flex-wrap gap-3">
@@ -1196,11 +1422,11 @@ const UserProfile = () => {
                         subscriptionStatus
                       )}`}
                     >
-                      Subscription: {subscriptionStatus}
+                      {t.hero.subscription}: {getStatusLabel(subscriptionStatus, t)}
                     </span>
 
                     <span className="rounded-full border border-white/20 bg-white/15 px-4 py-2 text-sm font-semibold text-white">
-                      Joined: {formatDate(user?.createdAt)}
+                      {t.hero.joined}: {formatDate(user?.createdAt, locale, t.common.notAvailable)}
                     </span>
                   </div>
                 </div>
@@ -1208,12 +1434,17 @@ const UserProfile = () => {
 
               <div className="flex flex-wrap gap-3">
                 <motion.button
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.97 }}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-white px-6 py-3 font-semibold text-cyan-700 shadow-lg transition-all hover:shadow-xl"
+                  type="button"
+                  onClick={openEditProfileModal}
+                  disabled={user?.role !== "client"}
+                  whileHover={user?.role === "client" ? { scale: 1.03 } : {}}
+                  whileTap={user?.role === "client" ? { scale: 0.97 } : {}}
+                  className={`inline-flex items-center gap-2 rounded-2xl bg-white px-6 py-3 font-semibold text-cyan-700 shadow-lg transition-all hover:shadow-xl ${
+                    user?.role !== "client" ? "cursor-not-allowed opacity-70" : ""
+                  }`}
                 >
                   <FaRegEdit />
-                  Edit Profile
+                  {t.hero.editProfile}
                 </motion.button>
 
                 <motion.button
@@ -1223,7 +1454,7 @@ const UserProfile = () => {
                   className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-slate-900/20 px-6 py-3 font-semibold text-white backdrop-blur-md transition-all hover:bg-slate-900/30"
                 >
                   <FaSyncAlt />
-                  Refresh
+                  {t.hero.refresh}
                 </motion.button>
               </div>
             </div>
@@ -1284,6 +1515,8 @@ const UserProfile = () => {
             currentPlanPrice={currentPlanPrice}
             currentPlanCurrency={currentPlanCurrency}
             loadingSubscription={loadingSubscription}
+            t={t}
+            locale={locale}
           />
         )}
 
@@ -1299,6 +1532,8 @@ const UserProfile = () => {
               setSelectedChatConnectionId(id);
               setActiveTab("chat");
             }}
+            t={t}
+            locale={locale}
           />
         )}
 
@@ -1340,6 +1575,8 @@ const UserProfile = () => {
               selectedChatConnectionId &&
               fetchConnectionMessages(selectedChatConnectionId)
             }
+            t={t}
+            locale={locale}
           />
         )}
 
@@ -1355,6 +1592,8 @@ const UserProfile = () => {
               setSelectedChatConnectionId(connectionId);
               setActiveTab("chat");
             }}
+            t={t}
+            locale={locale}
           />
         )}
 
@@ -1364,6 +1603,8 @@ const UserProfile = () => {
             loading={loadingPosts}
             actionLoadingId={actionLoadingId}
             onAcceptProposal={handleAcceptProposal}
+            t={t}
+            locale={locale}
           />
         )}
 
@@ -1375,8 +1616,240 @@ const UserProfile = () => {
             loadingHistory={loadingHistory}
             loadingPayments={loadingPayments}
             fetchPayments={fetchPayments}
+            t={t}
+            locale={locale}
           />
         )}
+
+        {showEditProfile && (
+          <EditProfileModal
+            user={user}
+            form={editProfileForm}
+            preview={profilePreview}
+            loading={updatingProfile}
+            t={t}
+            onChange={handleEditProfileChange}
+            onImageChange={handleEditProfileImageChange}
+            onClose={closeEditProfileModal}
+            onSubmit={handleUpdateProfile}
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
+
+const EditProfileModal = ({
+  user,
+  form,
+  preview,
+  loading,
+  t,
+  onChange,
+  onImageChange,
+  onClose,
+  onSubmit,
+}) => {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 18 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 18 }}
+        className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.25)]"
+      >
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur-xl md:px-8">
+          <div className="flex items-start justify-between gap-5">
+            <div>
+              <p className="inline-flex rounded-full bg-cyan-50 px-3 py-1 text-xs font-extrabold text-cyan-700">
+                {t.editProfile.badge}
+              </p>
+
+              <h2 className="mt-3 text-2xl font-extrabold text-slate-900 md:text-3xl">
+                {t.editProfile.title}
+              </h2>
+
+              <p className="mt-1 text-sm font-medium leading-6 text-slate-500">
+                {t.editProfile.desc}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 disabled:opacity-60"
+              aria-label={t.editProfile.close}
+            >
+              <FaTimes />
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={onSubmit} className="p-6 md:p-8">
+          {user?.role !== "client" && (
+            <div className="mb-6 rounded-3xl border border-amber-200 bg-amber-50 p-5">
+              <h3 className="font-extrabold text-amber-800">
+                {t.editProfile.clientOnlyTitle}
+              </h3>
+              <p className="mt-1 text-sm font-semibold leading-6 text-amber-700">
+                {t.editProfile.clientOnlyDesc}
+              </p>
+            </div>
+          )}
+
+          <div className="mb-8 rounded-3xl border border-cyan-100 bg-gradient-to-r from-cyan-50 to-white p-5">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+              <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-3xl border border-white bg-cyan-100 text-cyan-700 shadow-md">
+                {preview ? (
+                  <img
+                    src={preview}
+                    alt={form.name || t.common.unnamedUser}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-2xl font-black">
+                    {getInitials(form.name)}
+                  </div>
+                )}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <h3 className="text-lg font-extrabold text-slate-900">
+                  {t.editProfile.photoTitle}
+                </h3>
+                <p className="mt-1 text-sm font-medium leading-6 text-slate-500">
+                  {t.editProfile.photoDesc}
+                </p>
+
+                <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-2xl bg-cyan-600 px-5 py-3 text-sm font-extrabold text-white shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-700">
+                  <FaCamera />
+                  {t.editProfile.chooseImage}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={loading || user?.role !== "client"}
+                    onChange={(e) => onImageChange(e.target.files?.[0])}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <InputField
+              label={t.editProfile.fullName}
+              value={form.name}
+              required
+              icon={<FaUserCircle />}
+              placeholder={t.editProfile.fullNamePlaceholder}
+              disabled={loading || user?.role !== "client"}
+              onChange={(value) => onChange("name", value)}
+            />
+
+            <InputField
+              label={t.editProfile.phoneNumber}
+              value={form.phone}
+              required
+              icon={<FaPhoneAlt />}
+              placeholder={t.editProfile.phonePlaceholder}
+              disabled={loading || user?.role !== "client"}
+              onChange={(value) => onChange("phone", value)}
+            />
+
+            <InputField
+              label={t.editProfile.city}
+              value={form.city}
+              icon={<FaMapMarkerAlt />}
+              placeholder={t.editProfile.cityPlaceholder}
+              disabled={loading || user?.role !== "client"}
+              onChange={(value) => onChange("city", value)}
+            />
+
+            <InputField
+              label={t.editProfile.officeAddress}
+              value={form.officeAddress}
+              icon={<FaBriefcase />}
+              placeholder={t.editProfile.officeAddressPlaceholder}
+              disabled={loading || user?.role !== "client"}
+              onChange={(value) => onChange("officeAddress", value)}
+            />
+          </div>
+
+          <div className="mt-5">
+            <label className="mb-2 block text-sm font-extrabold text-slate-700">
+              {t.editProfile.bio}
+            </label>
+            <textarea
+              value={form.bio}
+              rows={5}
+              maxLength={1000}
+              placeholder={t.editProfile.bioPlaceholder}
+              disabled={loading || user?.role !== "client"}
+              onChange={(e) => onChange("bio", e.target.value)}
+              className="w-full resize-none rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+            <div className="mt-2 flex items-center justify-between gap-3 text-xs font-semibold text-slate-500">
+              <span>{t.editProfile.bioHint}</span>
+              <span>{String(form.bio || "").length}/1000</span>
+            </div>
+          </div>
+
+          <div className="mt-8 flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-6 py-3 text-sm font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+            >
+              {t.editProfile.cancel}
+            </button>
+
+            <button
+              type="submit"
+              disabled={loading || user?.role !== "client"}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-600 to-cyan-700 px-6 py-3 text-sm font-extrabold text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-700 hover:to-cyan-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <FaCheck />
+              {loading ? t.editProfile.saving : t.editProfile.saveChanges}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  );
+};
+
+const InputField = ({
+  label,
+  value,
+  placeholder,
+  required = false,
+  icon,
+  disabled,
+  onChange,
+}) => {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-extrabold text-slate-700">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+
+      <div className="relative">
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+          {icon}
+        </div>
+
+        <input
+          type="text"
+          value={value}
+          placeholder={placeholder}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded-2xl border border-slate-300 bg-white py-3 pl-11 pr-4 text-sm font-semibold text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 disabled:bg-slate-100 disabled:text-slate-400"
+        />
       </div>
     </div>
   );
@@ -1403,6 +1876,8 @@ const ChatTab = ({
   onClearAttachment,
   onSendMessage,
   onRefreshMessages,
+  t,
+  locale,
 }) => {
   const userId = String(user?._id || user?.id || "");
   const otherUser = getOtherUserFromConnection(selectedConnection, user);
@@ -1418,10 +1893,10 @@ const ChatTab = ({
           <div>
             <h2 className="flex items-center gap-3 text-2xl font-extrabold text-slate-900">
               <FaComments className="text-cyan-700" />
-              Appointment Conversation
+              {t.chat.title}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Chat only with the lawyer/client connected to your booked appointment.
+              {t.chat.desc}
             </p>
           </div>
 
@@ -1432,7 +1907,7 @@ const ChatTab = ({
             className="inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-white px-5 py-3 text-sm font-extrabold text-cyan-700 transition hover:bg-cyan-50 disabled:opacity-60"
           >
             <FaSyncAlt />
-            Refresh Chat
+            {t.chat.refreshChat}
           </button>
         </div>
       </div>
@@ -1446,11 +1921,10 @@ const ChatTab = ({
 
             <div>
               <h3 className="text-lg font-extrabold text-amber-800">
-                Active Subscription Required
+                {t.chat.activeSubscriptionRequired}
               </h3>
               <p className="mt-1 text-sm font-semibold leading-6 text-amber-700">
-                Free and paid active plans can use conversation. Your account
-                does not have an active subscription yet, so messaging is locked.
+                {t.chat.subscriptionRequiredDesc}
               </p>
 
               <a
@@ -1458,7 +1932,7 @@ const ChatTab = ({
                 className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-amber-600 px-5 py-3 text-sm font-extrabold text-white transition hover:bg-amber-700"
               >
                 <FaCrown />
-                Choose Plan
+                {t.chat.choosePlan}
               </a>
             </div>
           </div>
@@ -1469,7 +1943,7 @@ const ChatTab = ({
         <div className="border-b border-slate-200 bg-slate-50 p-5 lg:border-b-0 lg:border-r">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-lg font-extrabold text-slate-900">
-              Appointment Chats
+              {t.chat.appointmentChats}
             </h3>
 
             <span className="rounded-full bg-white px-3 py-1 text-xs font-extrabold text-slate-600">
@@ -1478,9 +1952,9 @@ const ChatTab = ({
           </div>
 
           {loadingConnections ? (
-            <LoadingBox text="Loading chats..." />
+            <LoadingBox text={t.chat.loadingChats} />
           ) : connections.length === 0 ? (
-            <EmptyBox text="No appointment chats found. Book an appointment first, then open chat from that appointment." />
+            <EmptyBox text={t.chat.emptyChats} />
           ) : (
             <div className="space-y-3">
               {connections.map((connection) => {
@@ -1515,20 +1989,20 @@ const ChatTab = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
                           <p className="truncate font-extrabold text-slate-900">
-                            {partner?.name || "Unknown User"}
+                            {partner?.name || t.common.unknownUser}
                           </p>
 
                           <span className="shrink-0 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-extrabold text-cyan-700">
-                            Appointment
+                            {t.chat.appointment}
                           </span>
                         </div>
 
                         <p className="mt-1 truncate text-xs font-semibold text-slate-500">
-                          {getConnectionTitle(connection)}
+                          {getConnectionTitle(connection, t)}
                         </p>
 
                         <p className="mt-2 truncate text-xs text-slate-500">
-                          {lastMessage?.message || "No messages yet"}
+                          {lastMessage?.message || t.chat.noMessagesYet}
                         </p>
                       </div>
                     </div>
@@ -1551,11 +2025,11 @@ const ChatTab = ({
 
                     <div>
                       <h3 className="text-lg font-extrabold text-slate-900">
-                        {otherUser?.name || "Conversation"}
+                        {otherUser?.name || t.chat.conversation}
                       </h3>
 
                       <p className="text-sm text-slate-500">
-                        {getConnectionSubtitle(selectedConnection)}
+                        {getConnectionSubtitle(selectedConnection, t, locale)}
                       </p>
                     </div>
                   </div>
@@ -1578,9 +2052,9 @@ const ChatTab = ({
 
               <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/70 p-5">
                 {loadingMessages ? (
-                  <LoadingBox text="Loading messages..." />
+                  <LoadingBox text={t.chat.loadingMessages} />
                 ) : messages.length === 0 ? (
-                  <EmptyBox text="No messages yet. Start the appointment conversation." />
+                  <EmptyBox text={t.chat.emptyMessages} />
                 ) : (
                   messages.map((item) => {
                     const senderId = String(item.sender?._id || item.sender);
@@ -1605,7 +2079,7 @@ const ChatTab = ({
                               isMine ? "text-cyan-50" : "text-slate-500"
                             }`}
                           >
-                            {isMine ? "You" : item.sender?.name || "User"}
+                            {isMine ? t.chat.you : item.sender?.name || t.chat.user}
                           </p>
 
                           <p className="whitespace-pre-wrap text-sm font-semibold leading-6">
@@ -1627,7 +2101,9 @@ const ChatTab = ({
                                   }`}
                                 >
                                   <FaPaperclip />
-                                  Google Drive Attachment {index + 1}
+                                  {replaceTemplate(t.chat.googleDriveAttachment, {
+                                    index: index + 1,
+                                  })}
                                 </a>
                               ))}
                             </div>
@@ -1638,7 +2114,7 @@ const ChatTab = ({
                               isMine ? "text-cyan-50/80" : "text-slate-400"
                             }`}
                           >
-                            {formatDateTime(item.createdAt)}
+                            {formatDateTime(item.createdAt, locale, t.common.notAvailable)}
                           </p>
                         </div>
                       </div>
@@ -1659,8 +2135,8 @@ const ChatTab = ({
                     maxLength={2000}
                     placeholder={
                       canUseChat
-                        ? "Write your message. Do not share phone numbers, payment numbers, or social media links."
-                        : "Activate a free or paid plan to use conversation."
+                        ? t.chat.writePlaceholder
+                        : t.chat.lockedPlaceholder
                     }
                     disabled={!canUseChat || sendingMessage}
                     className="w-full resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 disabled:bg-slate-100 disabled:text-slate-400"
@@ -1671,12 +2147,11 @@ const ChatTab = ({
                       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-black text-slate-800">
-                            Google Drive Attachment
+                            {t.chat.attachmentTitle}
                           </p>
 
                           <p className="mt-1 text-xs font-semibold text-slate-500">
-                            Only https://drive.google.com links are allowed.
-                            Phone numbers and social media links are blocked.
+                            {t.chat.attachmentDesc}
                           </p>
                         </div>
 
@@ -1686,7 +2161,7 @@ const ChatTab = ({
                           className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"
                         >
                           <FaTimes />
-                          Remove
+                          {t.chat.remove}
                         </button>
                       </div>
 
@@ -1714,16 +2189,16 @@ const ChatTab = ({
                         }`}
                       >
                         <FaPaperclip />
-                        Attachment
+                        {t.chat.attachment}
                       </button>
 
                       <div>
                         <p className="text-xs font-semibold text-slate-500">
-                          {chatMessage.length}/2000 characters
+                          {chatMessage.length}/2000 {t.chat.characters}
                         </p>
 
                         <p className="mt-1 text-xs font-semibold text-red-500">
-                          Phone/payment numbers and social media links are blocked.
+                          {t.chat.blockedNote}
                         </p>
                       </div>
                     </div>
@@ -1736,7 +2211,7 @@ const ChatTab = ({
                       className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-600 to-cyan-700 px-6 py-3 text-sm font-extrabold text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-700 hover:to-cyan-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <FaPaperPlane />
-                      {sendingMessage ? "Sending..." : "Send Message"}
+                      {sendingMessage ? t.chat.sending : t.chat.sendMessage}
                     </button>
                   </div>
                 </div>
@@ -1744,7 +2219,7 @@ const ChatTab = ({
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center p-8">
-              <EmptyBox text="Select an appointment chat to open conversation." />
+              <EmptyBox text={t.chat.selectChat} />
             </div>
           )}
         </div>
@@ -1762,6 +2237,8 @@ const OverviewTab = ({
   currentPlanPrice,
   currentPlanCurrency,
   loadingSubscription,
+  t,
+  locale,
 }) => {
   return (
     <div className="mt-8 grid grid-cols-1 gap-8 xl:grid-cols-3">
@@ -1778,11 +2255,11 @@ const OverviewTab = ({
 
             <div>
               <h2 className="text-2xl font-bold text-slate-800">
-                Personal Information
+                {t.overview.personalTitle}
               </h2>
 
               <p className="text-sm text-slate-500">
-                Your core account and identity details
+                {t.overview.personalDesc}
               </p>
             </div>
           </div>
@@ -1790,26 +2267,26 @@ const OverviewTab = ({
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             <InfoCard
               icon={<FaUserCircle />}
-              label="Full Name"
-              value={user?.name || "Not available"}
+              label={t.labels.fullName}
+              value={user?.name || t.common.notAvailable}
             />
 
             <InfoCard
               icon={<FaEnvelope />}
-              label="Email Address"
-              value={user?.email || "Not available"}
+              label={t.labels.emailAddress}
+              value={user?.email || t.common.notAvailable}
             />
 
             <InfoCard
               icon={<FaPhoneAlt />}
-              label="Phone Number"
-              value={user?.phone || "Not available"}
+              label={t.labels.phoneNumber}
+              value={user?.phone || t.common.notAvailable}
             />
 
             <InfoCard
               icon={<FaUserShield />}
-              label="User Role"
-              value={user?.role || "client"}
+              label={t.labels.userRole}
+              value={getStatusLabel(user?.role || "client", t)}
               capitalize
             />
           </div>
@@ -1827,11 +2304,11 @@ const OverviewTab = ({
 
             <div>
               <h2 className="text-2xl font-bold text-slate-800">
-                Professional & Legal Information
+                {t.overview.legalTitle}
               </h2>
 
               <p className="text-sm text-slate-500">
-                Lawyer specific or account verification related data
+                {t.overview.legalDesc}
               </p>
             </div>
           </div>
@@ -1839,26 +2316,26 @@ const OverviewTab = ({
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             <InfoCard
               icon={<FaIdCard />}
-              label="National ID (NID)"
-              value={user?.nid || "Not available"}
+              label={t.labels.nationalId}
+              value={user?.nid || t.common.notAvailable}
             />
 
             <InfoCard
               icon={<FaBalanceScale />}
-              label="Law Registration Number"
-              value={user?.lawRegNumber || "Not available"}
+              label={t.labels.lawRegistrationNumber}
+              value={user?.lawRegNumber || t.common.notAvailable}
             />
 
             <InfoCard
               icon={<MdVerifiedUser />}
-              label="Phone Verification"
-              value={user?.phoneVerified ? "Verified" : "Not Verified"}
+              label={t.labels.phoneVerification}
+              value={user?.phoneVerified ? t.status.verified : t.status.notVerified}
             />
 
             <InfoCard
               icon={<FaCalendarAlt />}
-              label="Account Created"
-              value={formatDate(user?.createdAt)}
+              label={t.labels.accountCreated}
+              value={formatDate(user?.createdAt, locale, t.common.notAvailable)}
             />
           </div>
         </motion.div>
@@ -1871,33 +2348,33 @@ const OverviewTab = ({
           <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-2xl font-bold text-slate-800">
-                Account Summary
+                {t.overview.summaryTitle}
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                Role, subscription, and verification overview
+                {t.overview.summaryDesc}
               </p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
             <SummaryCard
-              title="Current Role"
-              value={user?.role || "client"}
+              title={t.labels.currentRole}
+              value={getStatusLabel(user?.role || "client", t)}
               icon={<FaUserShield />}
               styleClass={getRoleBadgeStyle(user?.role)}
             />
 
             <SummaryCard
-              title="Subscription"
-              value={subscriptionStatus}
+              title={t.labels.subscription}
+              value={getStatusLabel(subscriptionStatus, t)}
               icon={<MdSubscriptions />}
               styleClass={getSubscriptionBadgeStyle(subscriptionStatus)}
             />
 
             <SummaryCard
-              title="Phone Status"
-              value={user?.phoneVerified ? "Verified" : "Unverified"}
+              title={t.labels.phoneStatus}
+              value={user?.phoneVerified ? t.status.verified : t.status.unverified}
               icon={user?.phoneVerified ? <FaCheckCircle /> : <FaTimesCircle />}
               styleClass={
                 user?.phoneVerified
@@ -1922,11 +2399,11 @@ const OverviewTab = ({
 
             <div>
               <h3 className="text-xl font-bold text-slate-800">
-                Subscription Plan
+                {t.overview.subscriptionPlan}
               </h3>
 
               <p className="text-sm text-slate-500">
-                Your current membership overview
+                {t.overview.subscriptionPlanDesc}
               </p>
             </div>
           </div>
@@ -1936,37 +2413,37 @@ const OverviewTab = ({
               subscriptionStatus
             )}`}
           >
-            <p className="mb-2 text-sm font-medium">Status</p>
+            <p className="mb-2 text-sm font-medium">{t.overview.status}</p>
 
             <h4 className="text-2xl font-extrabold capitalize">
-              {subscriptionStatus}
+              {getStatusLabel(subscriptionStatus, t)}
             </h4>
           </div>
 
           <div className="mt-5 space-y-4">
-            <MiniDetail label="Current Plan" value={currentPlanName} />
+            <MiniDetail label={t.overview.currentPlan} value={currentPlanName} />
 
             <MiniDetail
-              label="Price"
+              label={t.overview.price}
               value={
                 activeSubscription
-                  ? formatCurrency(currentPlanPrice, currentPlanCurrency)
-                  : "No active subscription"
+                  ? formatCurrency(currentPlanPrice, currentPlanCurrency, locale)
+                  : t.common.notAvailable
               }
             />
 
             <MiniDetail
-              label="Start Date"
-              value={formatDate(activeSubscription?.startDate)}
+              label={t.overview.startDate}
+              value={formatDate(activeSubscription?.startDate, locale, t.common.notAvailable)}
             />
 
             <MiniDetail
-              label="End Date"
-              value={formatDate(activeSubscription?.endDate)}
+              label={t.overview.endDate}
+              value={formatDate(activeSubscription?.endDate, locale, t.common.notAvailable)}
             />
 
             <MiniDetail
-              label="Account Type"
+              label={t.overview.accountType}
               value={(user?.role || "client").toUpperCase()}
             />
           </div>
@@ -1992,19 +2469,19 @@ const OverviewTab = ({
 
             <div>
               <h3 className="text-xl font-bold text-slate-800">
-                Plan Features
+                {t.overview.planFeatures}
               </h3>
 
               <p className="text-sm text-slate-500">
-                Features unlocked by your subscription
+                {t.overview.planFeaturesDesc}
               </p>
             </div>
           </div>
 
           {loadingSubscription ? (
-            <LoadingBox text="Loading features..." />
+            <LoadingBox text={t.overview.loadingFeatures} />
           ) : activeFeatures.length === 0 ? (
-            <EmptyBox text="No active plan features found." />
+            <EmptyBox text={t.overview.noPlanFeatures} />
           ) : (
             <div className="space-y-3">
               {activeFeatures.slice(0, 8).map((feature) => (
@@ -2017,7 +2494,7 @@ const OverviewTab = ({
                   </p>
 
                   <span className="shrink-0 rounded-full bg-white px-3 py-1 text-xs font-extrabold text-slate-900">
-                    {getFeatureDisplayValue(feature.value)}
+                    {getFeatureDisplayValue(feature.value, t)}
                   </span>
                 </div>
               ))}
@@ -2031,15 +2508,15 @@ const OverviewTab = ({
           className="rounded-[26px] border border-slate-200 bg-white p-6 shadow-[0_12px_40px_rgba(0,0,0,0.05)]"
         >
           <h3 className="mb-5 text-xl font-bold text-slate-800">
-            Verification Status
+            {t.overview.verificationStatus}
           </h3>
 
           <div className="space-y-4">
-            <StatusRow icon={<FaEnvelope />} label="Email Available" status={!!user?.email} />
-            <StatusRow icon={<FaPhoneAlt />} label="Phone Added" status={!!user?.phone} />
-            <StatusRow icon={<MdVerifiedUser />} label="Phone Verified" status={!!user?.phoneVerified} />
-            <StatusRow icon={<FaBalanceScale />} label="Lawyer Credentials" status={!!user?.lawRegNumber} />
-            <StatusRow icon={<FaIdCard />} label="NID Submitted" status={!!user?.nid} />
+            <StatusRow icon={<FaEnvelope />} label={t.labels.emailAvailable} status={!!user?.email} t={t} />
+            <StatusRow icon={<FaPhoneAlt />} label={t.labels.phoneAdded} status={!!user?.phone} t={t} />
+            <StatusRow icon={<MdVerifiedUser />} label={t.labels.phoneVerified} status={!!user?.phoneVerified} t={t} />
+            <StatusRow icon={<FaBalanceScale />} label={t.labels.lawyerCredentials} status={!!user?.lawRegNumber} t={t} />
+            <StatusRow icon={<FaIdCard />} label={t.labels.nidSubmitted} status={!!user?.nid} t={t} />
           </div>
         </motion.div>
       </div>
@@ -2055,6 +2532,8 @@ const ConnectionsTab = ({
   onAccept,
   onReject,
   onOpenChat,
+  t,
+  locale,
 }) => {
   const incomingPending = connections.filter((connection) => {
     const requestedById = connection.requestedBy?._id || connection.requestedBy;
@@ -2075,22 +2554,22 @@ const ConnectionsTab = ({
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-extrabold text-slate-900">
-            Connection Requests
+            {t.connections.title}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Accept lawyer connection requests before conversation.
+            {t.connections.desc}
           </p>
         </div>
 
         <span className="rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-extrabold text-cyan-700">
-          Pending: {incomingPending.length}
+          {t.connections.pending}: {incomingPending.length}
         </span>
       </div>
 
       {loading ? (
-        <LoadingBox text="Loading connection requests..." />
+        <LoadingBox text={t.connections.loading} />
       ) : connections.length === 0 ? (
-        <EmptyBox text="No connection requests found." />
+        <EmptyBox text={t.connections.empty} />
       ) : (
         <div className="space-y-5">
           {connections.map((connection) => {
@@ -2114,36 +2593,36 @@ const ConnectionsTab = ({
                           connection.status
                         )}`}
                       >
-                        {connection.status}
+                        {getStatusLabel(connection.status, t)}
                       </span>
 
                       <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">
-                        {connection.post?.category || "case"}
+                        {connection.post?.category || t.common.case}
                       </span>
                     </div>
 
                     <h3 className="text-lg font-extrabold text-slate-900">
-                      {connection.post?.title || "Untitled Case"}
+                      {connection.post?.title || t.connections.untitledCase}
                     </h3>
 
                     <p className="mt-2 text-sm leading-6 text-slate-600">
-                      {connection.requestMessage || "No request message added."}
+                      {connection.requestMessage || t.connections.noRequestMessage}
                     </p>
 
                     <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
                       <MiniDetail
-                        label="Client"
+                        label={t.labels.client}
                         value={connection.client?.name || "-"}
                       />
 
                       <MiniDetail
-                        label="Lawyer"
+                        label={t.labels.lawyer}
                         value={connection.lawyer?.name || "-"}
                       />
 
                       <MiniDetail
-                        label="Requested"
-                        value={formatDateTime(connection.createdAt)}
+                        label={t.labels.requested}
+                        value={formatDateTime(connection.createdAt, locale, t.common.notAvailable)}
                       />
                     </div>
                   </div>
@@ -2161,8 +2640,8 @@ const ConnectionsTab = ({
                         >
                           <FaCheck />
                           {actionLoadingId === `accept-${connection._id}`
-                            ? "Accepting..."
-                            : "Accept Request"}
+                            ? t.connections.accepting
+                            : t.connections.acceptRequest}
                         </button>
 
                         <button
@@ -2175,8 +2654,8 @@ const ConnectionsTab = ({
                         >
                           <FaTimes />
                           {actionLoadingId === `reject-${connection._id}`
-                            ? "Rejecting..."
-                            : "Reject"}
+                            ? t.connections.rejecting
+                            : t.connections.reject}
                         </button>
                       </>
                     )}
@@ -2188,7 +2667,7 @@ const ConnectionsTab = ({
                         className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-5 py-3 text-sm font-extrabold text-white transition hover:bg-cyan-700"
                       >
                         <FaComments />
-                        Open Chat
+                        {t.connections.openChat}
                       </button>
                     )}
                   </div>
@@ -2202,7 +2681,14 @@ const ConnectionsTab = ({
   );
 };
 
-const ProposalsTab = ({ posts, loading, actionLoadingId, onAcceptProposal }) => {
+const ProposalsTab = ({
+  posts,
+  loading,
+  actionLoadingId,
+  onAcceptProposal,
+  t,
+  locale,
+}) => {
   const postsWithBids = posts.filter((post) => post.bids?.length > 0);
 
   return (
@@ -2214,22 +2700,22 @@ const ProposalsTab = ({ posts, loading, actionLoadingId, onAcceptProposal }) => 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-extrabold text-slate-900">
-            Lawyer Proposals
+            {t.proposals.title}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Review lawyer fee, estimated days, and proposal message.
+            {t.proposals.desc}
           </p>
         </div>
 
         <span className="rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-extrabold text-cyan-700">
-          Cases: {postsWithBids.length}
+          {t.proposals.cases}: {postsWithBids.length}
         </span>
       </div>
 
       {loading ? (
-        <LoadingBox text="Loading proposals..." />
+        <LoadingBox text={t.proposals.loading} />
       ) : postsWithBids.length === 0 ? (
-        <EmptyBox text="No proposals found for your cases yet." />
+        <EmptyBox text={t.proposals.empty} />
       ) : (
         <div className="space-y-6">
           {postsWithBids.map((post) => (
@@ -2240,34 +2726,34 @@ const ProposalsTab = ({ posts, loading, actionLoadingId, onAcceptProposal }) => 
               <div className="border-b border-slate-200 bg-white p-5">
                 <div className="mb-3 flex flex-wrap gap-2">
                   <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-extrabold text-cyan-700 capitalize">
-                    {post.status?.replace("_", " ") || "open"}
+                    {getStatusLabel(post.status || "open", t)}
                   </span>
 
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-extrabold text-amber-700 capitalize">
-                    {post.category || "case"}
+                    {post.category || t.common.case}
                   </span>
                 </div>
 
                 <h3 className="text-xl font-extrabold text-slate-900">
-                  {post.title || "Untitled Case"}
+                  {post.title || t.proposals.untitledCase}
                 </h3>
 
                 <div className="mt-3 flex flex-wrap gap-3 text-sm text-slate-500">
                   <span className="inline-flex items-center gap-2">
                     <FaBriefcase />
-                    Budget: {formatCurrency(post.budgetMin || 0)} -{" "}
-                    {formatCurrency(post.budgetMax || 0)}
+                    {t.labels.budget}: {formatCurrency(post.budgetMin || 0, "BDT", locale)} -{" "}
+                    {formatCurrency(post.budgetMax || 0, "BDT", locale)}
                   </span>
 
                   <span className="inline-flex items-center gap-2">
                     <FaMapMarkerAlt />
                     {[post.division, post.district].filter(Boolean).join(", ") ||
-                      "Location not specified"}
+                      t.proposals.locationNotSpecified}
                   </span>
 
                   <span className="inline-flex items-center gap-2">
                     <FaGavel />
-                    Proposals: {post.bids?.length || 0}
+                    {t.labels.proposals}: {post.bids?.length || 0}
                   </span>
                 </div>
               </div>
@@ -2292,36 +2778,36 @@ const ProposalsTab = ({ posts, loading, actionLoadingId, onAcceptProposal }) => 
                                 bid.status
                               )}`}
                             >
-                              {bid.status}
+                              {getStatusLabel(bid.status, t)}
                             </span>
 
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-600">
-                              {formatDateTime(bid.createdAt)}
+                              {formatDateTime(bid.createdAt, locale, t.common.notAvailable)}
                             </span>
                           </div>
 
                           <h4 className="text-lg font-extrabold text-slate-900">
-                            {lawyer.name || "Unknown Lawyer"}
+                            {lawyer.name || t.common.unknownLawyer}
                           </h4>
 
                           <p className="mt-1 text-sm text-slate-500">
-                            Reg: {lawyer.lawRegNumber || "Not available"} •{" "}
-                            {lawyer.email || "No email"}
+                            {t.labels.reg}: {lawyer.lawRegNumber || t.common.notAvailable} •{" "}
+                            {lawyer.email || t.common.noEmail}
                           </p>
 
                           <p className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-                            {bid.message || "No proposal message."}
+                            {bid.message || t.proposals.noProposalMessage}
                           </p>
 
                           <div className="mt-4 grid gap-3 md:grid-cols-2">
                             <MiniDetail
-                              label="Proposed Fee"
-                              value={formatCurrency(bid.proposedFee)}
+                              label={t.labels.proposedFee}
+                              value={formatCurrency(bid.proposedFee, "BDT", locale)}
                             />
 
                             <MiniDetail
-                              label="Estimated Days"
-                              value={`${bid.estimatedDays || 0} days`}
+                              label={t.labels.estimatedDays}
+                              value={`${bid.estimatedDays || 0} ${t.proposals.days}`}
                             />
                           </div>
                         </div>
@@ -2342,12 +2828,12 @@ const ProposalsTab = ({ posts, loading, actionLoadingId, onAcceptProposal }) => 
                           >
                             <FaCheck />
                             {actionLoadingId === `accept-bid-${bid._id}`
-                              ? "Accepting..."
+                              ? t.proposals.accepting
                               : bid.status === "accepted"
-                              ? "Accepted"
+                              ? t.proposals.accepted
                               : isAcceptedPost
-                              ? "Case In Progress"
-                              : "Accept Proposal"}
+                              ? t.proposals.caseInProgress
+                              : t.proposals.acceptProposal}
                           </button>
                         </div>
                       </div>
@@ -2395,6 +2881,8 @@ const AppointmentsTab = ({
   onCancelAppointment,
   onRefreshAppointments,
   onOpenAppointmentChat,
+  t,
+  locale,
 }) => {
   const upcomingAppointments = useMemo(() => {
     return appointments.filter((booking) =>
@@ -2430,7 +2918,7 @@ const AppointmentsTab = ({
                   booking.status
                 )}`}
               >
-                {booking.status || "unknown"}
+                {getStatusLabel(booking.status || "unknown", t)}
               </span>
 
               <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-extrabold text-cyan-700 capitalize">
@@ -2438,40 +2926,40 @@ const AppointmentsTab = ({
               </span>
 
               <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">
-                Booked: {formatDateTime(booking.createdAt)}
+                {t.labels.booked}: {formatDateTime(booking.createdAt, locale, t.common.notAvailable)}
               </span>
             </div>
 
             <h3 className="text-lg font-extrabold text-slate-900">
-              {booking.subject || "Appointment"}
+              {booking.subject || t.appointments.appointment}
             </h3>
 
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              {booking.message || "No extra message added."}
+              {booking.message || t.appointments.noExtraMessage}
             </p>
 
             <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
               <MiniDetail
-                label={isClient ? "Lawyer" : "Client"}
+                label={isClient ? t.labels.lawyer : t.labels.client}
                 value={otherPerson?.name || "-"}
               />
 
               <MiniDetail
-                label="Date"
-                value={formatDate(booking.requestedDate)}
+                label={t.labels.date}
+                value={formatDate(booking.requestedDate, locale, t.common.notAvailable)}
               />
 
               <MiniDetail
-                label="Time"
+                label={t.labels.time}
                 value={booking.requestedTime || "-"}
               />
 
               <MiniDetail
-                label="Fee"
+                label={t.labels.fee}
                 value={
                   booking.lawyer?.consultationFee
-                    ? formatCurrency(booking.lawyer.consultationFee)
-                    : "Not set"
+                    ? formatCurrency(booking.lawyer.consultationFee, "BDT", locale)
+                    : t.common.notSet
                 }
               />
             </div>
@@ -2484,7 +2972,7 @@ const AppointmentsTab = ({
 
             {booking.cancelReason && (
               <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-6 text-red-700">
-                Cancel reason: {booking.cancelReason}
+                {t.labels.cancelReason}: {booking.cancelReason}
               </div>
             )}
           </div>
@@ -2497,7 +2985,7 @@ const AppointmentsTab = ({
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-5 py-3 text-sm font-extrabold text-white transition hover:bg-cyan-700"
               >
                 <FaComments />
-                Open Appointment Chat
+                {t.appointments.openChat}
               </button>
             ) : booking.status === "accepted" ? (
               <button
@@ -2506,7 +2994,7 @@ const AppointmentsTab = ({
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-200 px-5 py-3 text-sm font-extrabold text-slate-500"
               >
                 <FaLock />
-                Chat Not Ready
+                {t.appointments.chatNotReady}
               </button>
             ) : null}
 
@@ -2518,7 +3006,7 @@ const AppointmentsTab = ({
                 className="inline-flex items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-extrabold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
               >
                 <FaTimes />
-                {isCancelling ? "Cancelling..." : "Cancel Appointment"}
+                {isCancelling ? t.appointments.cancelling : t.appointments.cancelAppointment}
               </button>
             )}
           </div>
@@ -2537,10 +3025,10 @@ const AppointmentsTab = ({
         <div>
           <h2 className="flex items-center gap-3 text-2xl font-extrabold text-slate-900">
             <FaCalendarAlt className="text-cyan-700" />
-            My Appointments
+            {t.appointments.title}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            View booked appointments and open chat only for the appointment connection created after booking.
+            {t.appointments.desc}
           </p>
         </div>
 
@@ -2551,20 +3039,20 @@ const AppointmentsTab = ({
           className="inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-white px-5 py-3 text-sm font-extrabold text-cyan-700 transition hover:bg-cyan-50 disabled:opacity-60"
         >
           <FaSyncAlt className={loading ? "animate-spin" : ""} />
-          Refresh
+          {t.hero.refresh}
         </button>
       </div>
 
       {loading ? (
-        <LoadingBox text="Loading appointments..." />
+        <LoadingBox text={t.appointments.loading} />
       ) : appointments.length === 0 ? (
-        <EmptyBox text="No booked appointments found yet." />
+        <EmptyBox text={t.appointments.empty} />
       ) : (
         <div className="space-y-8">
           <div>
             <div className="mb-4 flex items-center justify-between gap-4">
               <h3 className="text-lg font-extrabold text-slate-900">
-                Upcoming Appointments
+                {t.appointments.upcoming}
               </h3>
               <span className="rounded-full bg-cyan-50 px-4 py-2 text-sm font-extrabold text-cyan-700">
                 {upcomingAppointments.length}
@@ -2572,7 +3060,7 @@ const AppointmentsTab = ({
             </div>
 
             {upcomingAppointments.length === 0 ? (
-              <EmptyBox text="No upcoming appointments." />
+              <EmptyBox text={t.appointments.noUpcoming} />
             ) : (
               <div className="space-y-4">
                 {upcomingAppointments.map(renderAppointmentCard)}
@@ -2583,7 +3071,7 @@ const AppointmentsTab = ({
           <div>
             <div className="mb-4 flex items-center justify-between gap-4">
               <h3 className="text-lg font-extrabold text-slate-900">
-                Appointment History
+                {t.appointments.history}
               </h3>
               <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-extrabold text-slate-700">
                 {completedAppointments.length}
@@ -2591,7 +3079,7 @@ const AppointmentsTab = ({
             </div>
 
             {completedAppointments.length === 0 ? (
-              <EmptyBox text="No previous appointment history." />
+              <EmptyBox text={t.appointments.noHistory} />
             ) : (
               <div className="space-y-4">
                 {completedAppointments.map(renderAppointmentCard)}
@@ -2611,6 +3099,8 @@ const BillingTab = ({
   loadingHistory,
   loadingPayments,
   fetchPayments,
+  t,
+  locale,
 }) => {
   return (
     <div className="mt-8 grid grid-cols-1 gap-8 xl:grid-cols-2">
@@ -2627,20 +3117,20 @@ const BillingTab = ({
 
             <div>
               <h2 className="text-2xl font-bold text-slate-800">
-                Subscription History
+                {t.billing.subscriptionHistory}
               </h2>
 
               <p className="text-sm text-slate-500">
-                Recent subscriptions you purchased or selected
+                {t.billing.subscriptionHistoryDesc}
               </p>
             </div>
           </div>
         </div>
 
         {loadingHistory ? (
-          <LoadingBox text="Loading subscription history..." />
+          <LoadingBox text={t.billing.loadingSubscriptionHistory} />
         ) : subscriptionHistory.length === 0 ? (
-          <EmptyBox text="No subscription history found." />
+          <EmptyBox text={t.billing.emptySubscriptionHistory} />
         ) : (
           <div className="space-y-4">
             {subscriptionHistory.map((sub) => (
@@ -2651,7 +3141,7 @@ const BillingTab = ({
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-extrabold text-slate-900">
-                      {sub.planName || sub.plan?.name || "Unknown Plan"}
+                      {sub.planName || sub.plan?.name || t.common.unknownPlan}
                     </h3>
 
                     <p className="mt-1 text-sm text-slate-500">
@@ -2664,19 +3154,19 @@ const BillingTab = ({
                       sub.status
                     )}`}
                   >
-                    {sub.status}
+                    {getStatusLabel(sub.status, t)}
                   </span>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
                   <MiniDetail
-                    label="Price"
-                    value={formatCurrency(sub.price, sub.currency)}
+                    label={t.overview.price}
+                    value={formatCurrency(sub.price, sub.currency, locale)}
                   />
 
-                  <MiniDetail label="Start" value={formatDate(sub.startDate)} />
+                  <MiniDetail label={t.labels.start} value={formatDate(sub.startDate, locale, t.common.notAvailable)} />
 
-                  <MiniDetail label="End" value={formatDate(sub.endDate)} />
+                  <MiniDetail label={t.labels.end} value={formatDate(sub.endDate, locale, t.common.notAvailable)} />
                 </div>
               </div>
             ))}
@@ -2697,11 +3187,11 @@ const BillingTab = ({
 
             <div>
               <h2 className="text-2xl font-bold text-slate-800">
-                Payment History
+                {t.billing.paymentHistory}
               </h2>
 
               <p className="text-sm text-slate-500">
-                Latest manual bKash/Nogod payment submissions
+                {t.billing.paymentHistoryDesc}
               </p>
             </div>
           </div>
@@ -2711,14 +3201,14 @@ const BillingTab = ({
             onClick={fetchPayments}
             className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100"
           >
-            Refresh
+            {t.billing.refresh}
           </button>
         </div>
 
         {loadingPayments ? (
-          <LoadingBox text="Loading payment history..." />
+          <LoadingBox text={t.billing.loadingPaymentHistory} />
         ) : payments.length === 0 ? (
-          <EmptyBox text="No payment history found." />
+          <EmptyBox text={t.billing.emptyPaymentHistory} />
         ) : (
           <div className="space-y-4">
             {payments.map((payment) => (
@@ -2729,11 +3219,11 @@ const BillingTab = ({
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-extrabold text-slate-900">
-                      {payment.planName || "Plan Payment"}
+                      {payment.planName || t.billing.planPayment}
                     </h3>
 
                     <p className="mt-1 break-all text-sm text-slate-500">
-                      TXN: {payment.transactionId || "-"}
+                      {t.labels.txn}: {payment.transactionId || t.common.dash}
                     </p>
                   </div>
 
@@ -2742,25 +3232,28 @@ const BillingTab = ({
                       payment.paymentStatus
                     )}`}
                   >
-                    {payment.paymentStatus}
+                    {getStatusLabel(payment.paymentStatus, t)}
                   </span>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
                   <MiniDetail
-                    label="Amount"
+                    label={t.labels.amount}
                     value={formatCurrency(
                       payment.amount,
-                      payment.currency || "BDT"
+                      payment.currency || "BDT",
+                      locale
                     )}
                   />
 
-                  <MiniDetail label="Method" value={payment.method || "-"} />
+                  <MiniDetail label={t.labels.method} value={payment.method || t.common.dash} />
 
                   <MiniDetail
-                    label="Submitted"
+                    label={t.labels.submitted}
                     value={formatDateTime(
-                      payment.paymentDate || payment.createdAt
+                      payment.paymentDate || payment.createdAt,
+                      locale,
+                      t.common.notAvailable
                     )}
                   />
                 </div>
@@ -2833,7 +3326,7 @@ const MiniDetail = ({ label, value }) => {
   );
 };
 
-const StatusRow = ({ icon, label, status }) => {
+const StatusRow = ({ icon, label, status, t }) => {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-center gap-3">
@@ -2850,7 +3343,7 @@ const StatusRow = ({ icon, label, status }) => {
         }`}
       >
         {status ? <FaCheckCircle /> : <FaTimesCircle />}
-        {status ? "Done" : "Missing"}
+        {status ? t.common.done : t.common.missing}
       </div>
     </div>
   );

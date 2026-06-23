@@ -1266,3 +1266,96 @@ export const deleteUser = async (req, res) => {
     });
   }
 };
+export const updateMyProfile = async (req, res) => {
+  try {
+    if (req.user.role !== "client") {
+      return res.status(403).json({
+        success: false,
+        message: "Only clients can update their own profile from this route",
+      });
+    }
+
+    const allowedFields = [
+      "name",
+      "phone",
+      "bio",
+      "officeAddress",
+      "city",
+    ];
+
+    const updateData = {};
+
+    allowedFields.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    });
+
+    const uploadedImageUrl = await uploadProfileImageIfExists(req.file);
+
+    if (uploadedImageUrl) {
+      updateData.profileImage = uploadedImageUrl;
+    }
+
+    if (updateData.name !== undefined) {
+      updateData.name = normalizeString(updateData.name);
+    }
+
+    if (updateData.phone !== undefined) {
+      updateData.phone = normalizeString(updateData.phone);
+    }
+
+    if (updateData.bio !== undefined) {
+      updateData.bio = normalizeString(updateData.bio);
+    }
+
+    if (updateData.officeAddress !== undefined) {
+      updateData.officeAddress = normalizeString(updateData.officeAddress);
+    }
+
+    if (updateData.city !== undefined) {
+      updateData.city = normalizeString(updateData.city);
+    }
+
+    if (!updateData.name && updateData.name !== undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Name cannot be empty",
+      });
+    }
+
+    if (!updateData.phone && updateData.phone !== undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone cannot be empty",
+      });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(req.user.id, updateData, {
+      new: true,
+      runValidators: true,
+    })
+      .select(safeUserSelect)
+      .populate(subscriptionPopulate)
+      .lean();
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: getSafeUserData(updatedUser),
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update profile",
+      error: err.message,
+    });
+  }
+};

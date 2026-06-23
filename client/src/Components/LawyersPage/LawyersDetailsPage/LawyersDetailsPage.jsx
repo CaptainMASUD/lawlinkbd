@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useNavigate, useParams } from "react-router-dom";
+import { useSelector } from "react-redux";
 import {
   ArrowLeft,
   AlertCircle,
@@ -28,12 +29,23 @@ import {
   X,
 } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:4000/api";
+import lawyerDetailsI18n from "../../../json/lawyerDetails.json";
+
+const normalizeApiBaseUrl = (value = "") => {
+  const fallback = "http://localhost:4000";
+  const raw = String(value || fallback).trim().replace(/\/+$/, "");
+
+  if (raw.endsWith("/api")) return raw;
+
+  return `${raw}/api`;
+};
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 
 const CONSULTATION_TYPES = [
-  { value: "online", label: "Online", icon: Video },
-  { value: "phone", label: "Phone", icon: Phone },
-  { value: "in_person", label: "In Person", icon: Building2 },
+  { value: "online", labelKey: "online", icon: Video },
+  { value: "phone", labelKey: "phone", icon: Phone },
+  { value: "in_person", labelKey: "inPerson", icon: Building2 },
 ];
 
 const getStoredToken = () => {
@@ -53,10 +65,10 @@ const getStoredUser = () => {
   }
 };
 
-const getInitials = (name = "") => {
+const getInitials = (name = "", fallback = "L") => {
   const parts = String(name).trim().split(" ").filter(Boolean);
 
-  if (!parts.length) return "L";
+  if (!parts.length) return fallback;
 
   return parts
     .slice(0, 2)
@@ -79,58 +91,74 @@ const getFutureInput = (days = 14) => {
   return toInputDate(date);
 };
 
-const formatDate = (value) => {
+const getLocale = (language) => (language === "bn" ? "bn-BD" : "en-BD");
+
+const formatDate = (value, language = "en") => {
   if (!value) return "-";
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
 
-  return date.toLocaleDateString("en-BD", {
+  return date.toLocaleDateString(getLocale(language), {
     day: "numeric",
     month: "short",
     year: "numeric",
   });
 };
 
-const formatDay = (value) => {
+const formatDay = (value, language = "en") => {
   if (!value) return "-";
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
 
-  return date.toLocaleDateString("en-BD", {
+  return date.toLocaleDateString(getLocale(language), {
     weekday: "long",
   });
 };
 
-const formatConsultationType = (value = "") => {
+const formatConsultationType = (value = "", t) => {
+  const keyMap = {
+    online: "online",
+    phone: "phone",
+    in_person: "inPerson",
+  };
+
+  const key = keyMap[value];
+
+  if (key && t?.consultationTypes?.[key]) {
+    return t.consultationTypes[key];
+  }
+
   return String(value || "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
-const formatMoney = (value) => {
+const formatMoney = (value, t, language = "en") => {
   const amount = Number(value || 0);
 
-  if (!amount) return "Not set";
+  if (!amount) return t.fallback.feeNotSet;
 
-  return `৳${amount.toLocaleString("en-BD")}`;
+  return `৳${amount.toLocaleString(getLocale(language))}`;
 };
 
-const getSlotStatus = (slot) => {
+const getSlotStatus = (slot, t) => {
   if (slot?.isBooked) {
-    return slot.bookingStatus === "accepted" ? "Booked" : "Pending";
+    return slot.bookingStatus === "accepted"
+      ? t.slotStatus.booked
+      : t.slotStatus.pending;
   }
 
   if (slot?.status === "blocked") {
-    return "Blocked";
+    return t.slotStatus.blocked;
   }
 
   if (slot?.isSelectable) {
-    return "Available";
+    return t.slotStatus.available;
   }
 
-  return "Unavailable";
+  return t.slotStatus.unavailable;
 };
 
 const getSlotBadgeClass = (slot) => {
@@ -149,24 +177,24 @@ const getSlotBadgeClass = (slot) => {
   return "bg-amber-50 text-amber-700 ring-1 ring-amber-100";
 };
 
-const getDateRangeError = (startDate, endDate) => {
-  if (!startDate || !endDate) return "Start date and end date are required.";
+const getDateRangeError = (startDate, endDate, t) => {
+  if (!startDate || !endDate) return t.dateErrors.required;
 
   const start = new Date(startDate);
   const end = new Date(endDate);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return "Invalid date range.";
+    return t.dateErrors.invalid;
   }
 
   if (start > end) {
-    return "Start date cannot be after end date.";
+    return t.dateErrors.startAfterEnd;
   }
 
   return "";
 };
 
-const getApiErrorMessage = async (res, fallbackMessage) => {
+const getApiErrorMessage = async (res, fallbackMessage, t) => {
   try {
     const data = await res.json();
 
@@ -176,22 +204,22 @@ const getApiErrorMessage = async (res, fallbackMessage) => {
         data?.message ||
         data?.error ||
         fallbackMessage ||
-        "Something went wrong. Please try again.",
+        t.api.genericError,
     };
   } catch {
     return {
       data: null,
-      message: fallbackMessage || "Something went wrong. Please try again.",
+      message: fallbackMessage || t.api.genericError,
     };
   }
 };
 
-const LawyerImage = ({ lawyer }) => {
+const LawyerImage = ({ lawyer, t }) => {
   if (lawyer?.profileImage) {
     return (
       <img
         src={lawyer.profileImage}
-        alt={lawyer?.name || "Lawyer profile"}
+        alt={lawyer?.name || t.fallback.lawyerProfileAlt}
         className="h-32 w-32 rounded-[34px] object-cover ring-4 ring-white shadow-sm md:h-40 md:w-40"
       />
     );
@@ -199,12 +227,12 @@ const LawyerImage = ({ lawyer }) => {
 
   return (
     <div className="flex h-32 w-32 items-center justify-center rounded-[34px] bg-cyan-700 text-4xl font-black text-white ring-4 ring-white shadow-sm md:h-40 md:w-40 md:text-5xl">
-      {getInitials(lawyer?.name)}
+      {getInitials(lawyer?.name, t.fallback.initial)}
     </div>
   );
 };
 
-const InfoCard = ({ icon: Icon, label, value, locked = false }) => (
+const InfoCard = ({ icon: Icon, label, value, locked = false, t }) => (
   <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
     <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
       <Icon className="h-4 w-4 text-cyan-700" />
@@ -212,7 +240,7 @@ const InfoCard = ({ icon: Icon, label, value, locked = false }) => (
     </div>
 
     <p className="mt-2 break-words text-sm font-black text-slate-950">
-      {locked ? "Locked by plan" : value || "-"}
+      {locked ? t.fallback.lockedByPlan : value || t.fallback.notAvailable}
     </p>
   </div>
 );
@@ -237,18 +265,17 @@ const SectionTitle = ({ icon: Icon, title, subtitle }) => (
   </div>
 );
 
-const EmptyAvailability = () => (
+const EmptyAvailability = ({ t }) => (
   <div className="flex min-h-[300px] items-center justify-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
     <div>
       <CalendarDays className="mx-auto mb-4 h-11 w-11 text-slate-400" />
 
       <p className="text-sm font-black text-slate-700">
-        No appointment slots found
+        {t.calendar.emptyTitle}
       </p>
 
       <p className="mt-1 max-w-sm text-sm leading-6 text-slate-500">
-        This lawyer has not added available slots in this date range. Try
-        another date range or check again later.
+        {t.calendar.emptyDescription}
       </p>
     </div>
   </div>
@@ -257,6 +284,11 @@ const EmptyAvailability = () => (
 export default function LawyerDetailsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+
+  const currentLanguage = useSelector((state) => state.language.currentLanguage);
+  const t =
+    lawyerDetailsI18n[currentLanguage]?.lawyerDetails ||
+    lawyerDetailsI18n.en.lawyerDetails;
 
   const bookingSubmitLockRef = useRef(false);
 
@@ -339,9 +371,11 @@ export default function LawyerDetailsPage() {
   }, [availability]);
 
   const selectedSummary = useMemo(() => {
-    if (!selectedDay || !selectedSlot) return "No slot selected";
-    return `${formatDate(selectedDay.date)} at ${selectedSlot.time}`;
-  }, [selectedDay, selectedSlot]);
+    if (!selectedDay || !selectedSlot) return t.fallback.noSlotSelected;
+    return `${formatDate(selectedDay.date, currentLanguage)} at ${
+      selectedSlot.time
+    }`;
+  }, [selectedDay, selectedSlot, t, currentLanguage]);
 
   const closeSuccessModal = () => {
     setSuccessModal(null);
@@ -362,7 +396,8 @@ export default function LawyerDetailsPage() {
 
       const { data, message } = await getApiErrorMessage(
         res,
-        "Failed to load lawyer details"
+        t.api.failedLoadLawyer,
+        t
       );
 
       if (!res.ok || !data?.success) {
@@ -371,16 +406,16 @@ export default function LawyerDetailsPage() {
 
       setLawyer(data.data || null);
     } catch (err) {
-      setPageError(err.message || "Failed to load lawyer details");
+      setPageError(err.message || t.api.failedLoadLawyer);
     } finally {
       setLoadingLawyer(false);
     }
-  }, [id, authHeaders]);
+  }, [id, authHeaders, t]);
 
   const fetchAvailability = useCallback(async () => {
     if (!id) return;
 
-    const dateRangeError = getDateRangeError(startDate, endDate);
+    const dateRangeError = getDateRangeError(startDate, endDate, t);
 
     if (dateRangeError) {
       setAvailability([]);
@@ -411,7 +446,8 @@ export default function LawyerDetailsPage() {
 
       const { data, message } = await getApiErrorMessage(
         res,
-        "Failed to load appointment slots"
+        t.api.failedLoadSlots,
+        t
       );
 
       if (!res.ok || !data?.success) {
@@ -445,11 +481,19 @@ export default function LawyerDetailsPage() {
       setAvailability([]);
       setSelectedDay(null);
       setSelectedSlot(null);
-      setAvailabilityError(err.message || "Failed to load appointment slots");
+      setAvailabilityError(err.message || t.api.failedLoadSlots);
     } finally {
       setLoadingAvailability(false);
     }
-  }, [id, startDate, endDate, authHeaders, selectedDay, selectedSlot]);
+  }, [
+    id,
+    startDate,
+    endDate,
+    authHeaders,
+    selectedDay,
+    selectedSlot,
+    t,
+  ]);
 
   useEffect(() => {
     fetchLawyer();
@@ -512,32 +556,32 @@ export default function LawyerDetailsPage() {
 
     try {
       if (!token) {
-        setBookingError("Please login first to book an appointment.");
+        setBookingError(t.booking.loginRequired);
         return;
       }
 
       if (currentUser?.role && currentUser.role !== "client") {
-        setBookingError("Only client accounts can book appointments.");
+        setBookingError(t.booking.clientOnly);
         return;
       }
 
       if (!selectedDay || !selectedSlot) {
-        setBookingError("Please select an available appointment slot.");
+        setBookingError(t.booking.selectSlot);
         return;
       }
 
       if (!selectedSlotTypes.includes(consultationType)) {
-        setBookingError("Selected slot does not support this consultation type.");
+        setBookingError(t.booking.unsupportedConsultation);
         return;
       }
 
       if (!subject.trim()) {
-        setBookingError("Please write appointment subject.");
+        setBookingError(t.booking.subjectRequired);
         return;
       }
 
       const bookedDetails = {
-        lawyerName: lawyer?.name || "Selected Lawyer",
+        lawyerName: lawyer?.name || t.fallback.selectedLawyer,
         date: selectedDay.date,
         time: selectedSlot.time,
         consultationType,
@@ -564,22 +608,21 @@ export default function LawyerDetailsPage() {
 
       const { data, message: apiMessage } = await getApiErrorMessage(
         res,
-        "Failed to book appointment"
+        t.api.failedBook,
+        t
       );
 
       if (!res.ok || !data?.success) {
         throw new Error(apiMessage);
       }
 
-      const finalMessage =
-        data.message ||
-        "Appointment booked successfully. The selected slot is now reserved.";
+      const finalMessage = data.message || t.booking.successMessage;
 
       setSuccess(finalMessage);
 
       setSuccessModal({
         ...bookedDetails,
-        title: "Appointment Booked Successfully",
+        title: t.booking.successTitle,
         messageText: finalMessage,
         bookingId: data?.data?._id || "",
       });
@@ -591,7 +634,7 @@ export default function LawyerDetailsPage() {
 
       fetchAvailability();
     } catch (err) {
-      setBookingError(err.message || "Failed to book appointment");
+      setBookingError(err.message || t.api.failedBook);
     } finally {
       setSubmitting(false);
 
@@ -609,7 +652,7 @@ export default function LawyerDetailsPage() {
           <div className="text-center">
             <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-cyan-700" />
             <p className="text-sm font-black text-slate-600">
-              Loading lawyer profile...
+              {t.loading.lawyerProfile}
             </p>
           </div>
         </div>
@@ -625,7 +668,7 @@ export default function LawyerDetailsPage() {
             <AlertCircle className="mx-auto mb-4 h-12 w-12 text-rose-500" />
 
             <h3 className="mb-2 text-xl font-black text-rose-700">
-              Failed to load lawyer profile
+              {t.errorState.title}
             </h3>
 
             <p className="mb-5 text-sm font-semibold text-rose-600">
@@ -637,7 +680,7 @@ export default function LawyerDetailsPage() {
               onClick={() => navigate("/lawyers")}
               className="rounded-2xl bg-rose-600 px-5 py-3 text-sm font-black text-white transition hover:bg-rose-700"
             >
-              Back to Lawyers
+              {t.errorState.backButton}
             </button>
           </div>
         </div>
@@ -657,7 +700,7 @@ export default function LawyerDetailsPage() {
               className="mb-6 inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to Lawyers
+              {t.buttons.backToLawyers}
             </button>
 
             <motion.div
@@ -670,56 +713,56 @@ export default function LawyerDetailsPage() {
 
                 <div className="relative flex flex-col gap-7 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex flex-col gap-6 md:flex-row md:items-start">
-                    <LawyerImage lawyer={lawyer} />
+                    <LawyerImage lawyer={lawyer} t={t} />
 
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h1 className="text-3xl font-black tracking-tight text-slate-950 md:text-5xl">
-                          {lawyer?.name || "Lawyer Profile"}
+                          {lawyer?.name || t.fallback.lawyerProfile}
                         </h1>
 
                         {lawyer?.isVerifiedLawyer && (
                           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
                             <BadgeCheck className="h-3.5 w-3.5" />
-                            Verified Lawyer
+                            {t.hero.verifiedLawyer}
                           </span>
                         )}
 
                         {lawyer?.phoneVerified === 1 && (
                           <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-50 px-3 py-1.5 text-xs font-black text-cyan-700 ring-1 ring-cyan-100">
                             <ShieldCheck className="h-3.5 w-3.5" />
-                            Phone Verified
+                            {t.hero.phoneVerified}
                           </span>
                         )}
                       </div>
 
                       <p className="mt-3 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
-                        {lawyer?.bio ||
-                          "This lawyer has not added a detailed bio yet."}
+                        {lawyer?.bio || t.fallback.noBio}
                       </p>
 
                       <div className="mt-5 flex flex-wrap gap-2 text-xs font-bold text-slate-600">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 ring-1 ring-slate-200">
                           <Gavel className="h-3.5 w-3.5 text-cyan-700" />
-                          {lawyer?.specialization || "Legal Consultant"}
+                          {lawyer?.specialization || t.fallback.legalConsultant}
                         </span>
 
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 ring-1 ring-slate-200">
                           <MapPin className="h-3.5 w-3.5 text-cyan-700" />
                           {isLocked("city")
-                            ? "City locked"
-                            : lawyer?.city || "City not set"}
+                            ? t.fallback.cityLocked
+                            : lawyer?.city || t.fallback.cityNotSet}
                         </span>
 
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 ring-1 ring-slate-200">
                           <Clock className="h-3.5 w-3.5 text-cyan-700" />
-                          {Number(lawyer?.experienceYears || 0)} Years
-                          Experience
+                          {Number(lawyer?.experienceYears || 0)}{" "}
+                          {t.hero.yearsExperience}
                         </span>
 
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 ring-1 ring-slate-200">
                           <Star className="h-3.5 w-3.5 text-cyan-700" />
-                          Fee: {formatMoney(lawyer?.consultationFee)}
+                          {t.hero.feePrefix}{" "}
+                          {formatMoney(lawyer?.consultationFee, t, currentLanguage)}
                         </span>
                       </div>
                     </div>
@@ -728,7 +771,7 @@ export default function LawyerDetailsPage() {
                   <div className="grid min-w-full gap-3 sm:grid-cols-3 lg:min-w-[360px] lg:grid-cols-1">
                     <div className="rounded-3xl border border-cyan-100 bg-white p-4 shadow-sm">
                       <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                        Available Days
+                        {t.stats.availableDays}
                       </p>
                       <p className="mt-1 text-3xl font-black text-slate-950">
                         {availableDays.length}
@@ -737,7 +780,7 @@ export default function LawyerDetailsPage() {
 
                     <div className="rounded-3xl border border-cyan-100 bg-white p-4 shadow-sm">
                       <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                        Open Slots
+                        {t.stats.openSlots}
                       </p>
                       <p className="mt-1 text-3xl font-black text-emerald-700">
                         {openSlots}
@@ -746,7 +789,7 @@ export default function LawyerDetailsPage() {
 
                     <div className="rounded-3xl border border-cyan-100 bg-white p-4 shadow-sm">
                       <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                        Booked / Pending
+                        {t.stats.bookedPending}
                       </p>
                       <p className="mt-1 text-3xl font-black text-rose-600">
                         {bookedSlots}
@@ -766,39 +809,55 @@ export default function LawyerDetailsPage() {
                 <div className="mb-5">
                   <SectionTitle
                     icon={UserRound}
-                    title="Profile Details"
-                    subtitle="Important lawyer information for client review."
+                    title={t.profileDetails.title}
+                    subtitle={t.profileDetails.subtitle}
                   />
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <InfoCard icon={UserRound} label="Name" value={lawyer?.name} />
+                  <InfoCard
+                    icon={UserRound}
+                    label={t.profileDetails.name}
+                    value={lawyer?.name}
+                    t={t}
+                  />
                   <InfoCard
                     icon={Gavel}
-                    label="Specialization"
+                    label={t.profileDetails.specialization}
                     value={lawyer?.specialization}
+                    t={t}
                   />
                   <InfoCard
                     icon={BriefcaseBusiness}
-                    label="Experience"
-                    value={`${Number(lawyer?.experienceYears || 0)} Years`}
+                    label={t.profileDetails.experience}
+                    value={`${Number(lawyer?.experienceYears || 0)} ${
+                      t.profileDetails.years
+                    }`}
+                    t={t}
                   />
                   <InfoCard
                     icon={Star}
-                    label="Consultation Fee"
-                    value={formatMoney(lawyer?.consultationFee)}
+                    label={t.profileDetails.consultationFee}
+                    value={formatMoney(
+                      lawyer?.consultationFee,
+                      t,
+                      currentLanguage
+                    )}
+                    t={t}
                   />
                   <InfoCard
                     icon={MapPin}
-                    label="City"
+                    label={t.profileDetails.city}
                     value={lawyer?.city}
                     locked={isLocked("city")}
+                    t={t}
                   />
                   <InfoCard
                     icon={Building2}
-                    label="Office Address"
+                    label={t.profileDetails.officeAddress}
                     value={lawyer?.officeAddress}
                     locked={isLocked("officeAddress")}
+                    t={t}
                   />
                 </div>
 
@@ -814,15 +873,14 @@ export default function LawyerDetailsPage() {
                 <div className="mb-5">
                   <SectionTitle
                     icon={FileText}
-                    title="About Lawyer"
-                    subtitle="Background and practice focus."
+                    title={t.about.title}
+                    subtitle={t.about.subtitle}
                   />
                 </div>
 
                 <div className="rounded-3xl bg-slate-50 p-5">
                   <p className="text-sm font-semibold leading-7 text-slate-600">
-                    {lawyer?.bio ||
-                      "No detailed professional summary has been added yet."}
+                    {lawyer?.bio || t.fallback.noProfessionalSummary}
                   </p>
                 </div>
               </div>
@@ -834,8 +892,8 @@ export default function LawyerDetailsPage() {
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <SectionTitle
                       icon={CalendarDays}
-                      title="Appointment Calendar"
-                      subtitle="Select an available slot. Booked or pending slots are disabled."
+                      title={t.calendar.title}
+                      subtitle={t.calendar.subtitle}
                     />
                   </div>
 
@@ -848,7 +906,7 @@ export default function LawyerDetailsPage() {
                         disabled={isBookingBusy}
                         className="rounded-full bg-slate-100 px-4 py-2 text-xs font-black text-slate-700 transition hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Next {days} Days
+                        {t.calendar.nextDays.replace("{days}", days)}
                       </button>
                     ))}
                   </div>
@@ -887,7 +945,7 @@ export default function LawyerDetailsPage() {
                       ) : (
                         <RefreshCcw className="h-4 w-4" />
                       )}
-                      Load Slots
+                      {t.buttons.loadSlots}
                     </button>
                   </div>
                 </div>
@@ -903,12 +961,12 @@ export default function LawyerDetailsPage() {
                     <div className="text-center">
                       <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-cyan-700" />
                       <p className="text-sm font-black text-slate-600">
-                        Loading available appointment slots...
+                        {t.loading.availableSlots}
                       </p>
                     </div>
                   </div>
                 ) : availability.length === 0 ? (
-                  <EmptyAvailability />
+                  <EmptyAvailability t={t} />
                 ) : (
                   <div className="space-y-4">
                     {availability.map((day) => {
@@ -924,11 +982,11 @@ export default function LawyerDetailsPage() {
                           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                             <div>
                               <h3 className="text-lg font-black text-slate-950">
-                                {formatDate(day.date)}
+                                {formatDate(day.date, currentLanguage)}
                               </h3>
 
                               <p className="mt-1 text-xs font-bold text-slate-500">
-                                {formatDay(day.date)}
+                                {formatDay(day.date, currentLanguage)}
                               </p>
                             </div>
 
@@ -940,11 +998,16 @@ export default function LawyerDetailsPage() {
                                     : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
                                 }`}
                               >
-                                {day.isActive ? "Active Day" : "Inactive"}
+                                {day.isActive
+                                  ? t.calendar.activeDay
+                                  : t.calendar.inactive}
                               </span>
 
                               <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-black text-cyan-700 ring-1 ring-cyan-100">
-                                {dayOpenSlots} Open Slots
+                                {t.calendar.openSlots.replace(
+                                  "{count}",
+                                  dayOpenSlots
+                                )}
                               </span>
                             </div>
                           </div>
@@ -985,13 +1048,15 @@ export default function LawyerDetailsPage() {
                                         slot
                                       )}`}
                                     >
-                                      {getSlotStatus(slot)}
+                                      {getSlotStatus(slot, t)}
                                     </span>
                                   </div>
 
                                   <p className="mt-2 text-xs font-bold capitalize text-slate-500">
                                     {(slot.consultationTypes || ["online"])
-                                      .map(formatConsultationType)
+                                      .map((item) =>
+                                        formatConsultationType(item, t)
+                                      )
                                       .join(", ")}
                                   </p>
 
@@ -1015,14 +1080,14 @@ export default function LawyerDetailsPage() {
                 <div className="mb-5">
                   <SectionTitle
                     icon={MessageSquareText}
-                    title="Book Appointment"
-                    subtitle="Choose a slot from the calendar and confirm your booking."
+                    title={t.booking.title}
+                    subtitle={t.booking.subtitle}
                   />
                 </div>
 
                 <div className="rounded-3xl border border-cyan-100 bg-cyan-50/70 px-4 py-3">
                   <p className="text-xs font-black uppercase tracking-wide text-cyan-700">
-                    Selected Slot
+                    {t.booking.selectedSlot}
                   </p>
 
                   <p
@@ -1039,7 +1104,7 @@ export default function LawyerDetailsPage() {
                 <form onSubmit={handleSubmitBooking} className="mt-5 space-y-4">
                   <div>
                     <label className="mb-2 block text-sm font-black text-slate-700">
-                      Consultation Type
+                      {t.booking.consultationType}
                     </label>
 
                     <div className="grid gap-2 sm:grid-cols-3">
@@ -1065,7 +1130,7 @@ export default function LawyerDetailsPage() {
                             }`}
                           >
                             <Icon className="h-4 w-4" />
-                            {type.label}
+                            {t.consultationTypes[type.labelKey]}
                           </button>
                         );
                       })}
@@ -1074,7 +1139,7 @@ export default function LawyerDetailsPage() {
 
                   <div>
                     <label className="mb-2 block text-sm font-black text-slate-700">
-                      Subject *
+                      {t.booking.subject}
                     </label>
 
                     <input
@@ -1083,7 +1148,7 @@ export default function LawyerDetailsPage() {
                       disabled={isBookingBusy}
                       onChange={(e) => setSubject(e.target.value)}
                       maxLength={160}
-                      placeholder="Example: Need consultation about property case"
+                      placeholder={t.booking.subjectPlaceholder}
                       className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
                     />
 
@@ -1094,7 +1159,7 @@ export default function LawyerDetailsPage() {
 
                   <div>
                     <label className="mb-2 block text-sm font-black text-slate-700">
-                      Message
+                      {t.booking.message}
                     </label>
 
                     <textarea
@@ -1103,7 +1168,7 @@ export default function LawyerDetailsPage() {
                       onChange={(e) => setMessage(e.target.value)}
                       maxLength={1000}
                       rows={5}
-                      placeholder="Write short details about your case..."
+                      placeholder={t.booking.messagePlaceholder}
                       className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
                     />
 
@@ -1126,20 +1191,19 @@ export default function LawyerDetailsPage() {
                     {isBookingBusy ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        Booking Appointment...
+                        {t.buttons.bookingAppointment}
                       </>
                     ) : (
                       <>
                         <Send className="h-4 w-4" />
-                        Book Appointment
+                        {t.buttons.bookAppointment}
                       </>
                     )}
                   </button>
 
                   <div className="flex items-start gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-semibold leading-5 text-slate-500">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    Once a client books a slot, it becomes unavailable for other
-                    clients automatically.
+                    {t.booking.info}
                   </div>
                 </form>
               </div>
@@ -1188,7 +1252,7 @@ export default function LawyerDetailsPage() {
               <div className="space-y-3 px-6 pb-6">
                 <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                    Lawyer
+                    {t.successModal.lawyer}
                   </p>
                   <p className="mt-1 text-sm font-black text-slate-950">
                     {successModal.lawyerName}
@@ -1198,16 +1262,16 @@ export default function LawyerDetailsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                      Date
+                      {t.successModal.date}
                     </p>
                     <p className="mt-1 text-sm font-black text-slate-950">
-                      {formatDate(successModal.date)}
+                      {formatDate(successModal.date, currentLanguage)}
                     </p>
                   </div>
 
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                      Time
+                      {t.successModal.time}
                     </p>
                     <p className="mt-1 text-sm font-black text-slate-950">
                       {successModal.time}
@@ -1218,16 +1282,19 @@ export default function LawyerDetailsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                      Consultation
+                      {t.successModal.consultation}
                     </p>
                     <p className="mt-1 text-sm font-black text-slate-950">
-                      {formatConsultationType(successModal.consultationType)}
+                      {formatConsultationType(
+                        successModal.consultationType,
+                        t
+                      )}
                     </p>
                   </div>
 
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                      Subject
+                      {t.successModal.subject}
                     </p>
                     <p className="mt-1 text-sm font-black text-slate-950">
                       {successModal.subject}
@@ -1238,7 +1305,7 @@ export default function LawyerDetailsPage() {
                 {successModal.message && (
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-                      Message
+                      {t.successModal.message}
                     </p>
                     <p className="mt-1 text-sm font-semibold leading-6 text-slate-700">
                       {successModal.message}
@@ -1252,7 +1319,7 @@ export default function LawyerDetailsPage() {
                     onClick={closeSuccessModal}
                     className="inline-flex flex-1 items-center justify-center rounded-2xl bg-cyan-700 px-5 py-3 text-sm font-black text-white transition hover:bg-cyan-800"
                   >
-                    Continue Browsing
+                    {t.buttons.continueBrowsing}
                   </button>
 
                   <button
@@ -1260,7 +1327,7 @@ export default function LawyerDetailsPage() {
                     onClick={() => navigate("/dashboard/bookings")}
                     className="inline-flex flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
                   >
-                    View My Bookings
+                    {t.buttons.viewMyBookings}
                   </button>
                 </div>
               </div>

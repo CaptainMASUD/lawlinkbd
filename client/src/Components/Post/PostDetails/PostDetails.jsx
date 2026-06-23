@@ -28,9 +28,16 @@ import {
   Hourglass,
 } from "lucide-react";
 import { restoreUser } from "../../../Redux/UserSlice/UserSlice";
+import postDetailsI18n from "../../../json/postDetails.json";
 
-const POSTS_API_URL = "http://localhost:4000/api/posts";
-const CONNECTIONS_API_URL = "http://localhost:4000/api/connections";
+const normalizeApiBaseUrl = (value) => {
+  const baseUrl = String(value || "http://localhost:4000").replace(/\/+$/, "");
+  return baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`;
+};
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
+const POSTS_API_URL = `${API_BASE_URL}/posts`;
+const CONNECTIONS_API_URL = `${API_BASE_URL}/connections`;
 
 const getStoredToken = () => {
   return localStorage.getItem("token") || sessionStorage.getItem("token");
@@ -47,28 +54,49 @@ const getStoredUser = () => {
   }
 };
 
-const formatDate = (dateString) => {
-  if (!dateString) return "Not available";
+const formatDate = (dateString, t, locale = "en-BD") => {
+  if (!dateString) return t.common.notAvailable;
 
   const date = new Date(dateString);
 
-  if (Number.isNaN(date.getTime())) return "Not available";
+  if (Number.isNaN(date.getTime())) return t.common.notAvailable;
 
-  return date.toLocaleDateString("en-BD", {
+  return date.toLocaleDateString(locale, {
     day: "numeric",
     month: "short",
     year: "numeric",
   });
 };
 
-const formatBudget = (min, max) => {
+const formatBudget = (min, max, t) => {
   const minValue = Number(min || 0);
   const maxValue = Number(max || 0);
 
-  if (!minValue && !maxValue) return "Budget not specified";
-  if (minValue && maxValue) return `৳${minValue} - ৳${maxValue}`;
-  if (!minValue && maxValue) return `Up to ৳${maxValue}`;
-  return `From ৳${minValue}`;
+  if (!minValue && !maxValue) return t.budget.notSpecified;
+  if (minValue && maxValue) return `৳${minValue.toLocaleString()} - ৳${maxValue.toLocaleString()}`;
+  if (!minValue && maxValue) return `${t.budget.upTo} ৳${maxValue.toLocaleString()}`;
+  return `${t.budget.from} ৳${minValue.toLocaleString()}`;
+};
+
+const getStatusLabel = (status, t) => {
+  return t.status?.[status] || status?.replace("_", " ") || t.status.open;
+};
+
+const getUrgencyLabel = (urgency, t) => {
+  return t.urgency?.[urgency] || t.urgency.medium;
+};
+
+const getCategoryLabel = (category, t) => {
+  return t.category?.[category] || t.category.legalPost;
+};
+
+const getConnectionStatusLabel = (status, t) => {
+  return t.status?.[status] || status || t.status.pending;
+};
+
+const getApiMessage = (message, fallback, language) => {
+  if (language === "bn") return fallback;
+  return message || fallback;
 };
 
 const getStatusClasses = (status) => {
@@ -120,6 +148,9 @@ const PostDetails = () => {
   const dispatch = useDispatch();
 
   const reduxCurrentUser = useSelector((state) => state.user.currentUser);
+  const currentLanguage = useSelector((state) => state.language.currentLanguage);
+  const t = postDetailsI18n[currentLanguage]?.postDetails || postDetailsI18n.en.postDetails;
+  const dateLocale = currentLanguage === "bn" ? "bn-BD" : "en-BD";
 
   const [currentUser, setCurrentUser] = useState(reduxCurrentUser || null);
   const [post, setPost] = useState(null);
@@ -206,17 +237,19 @@ const PostDetails = () => {
       const data = await response.json();
 
       if (!response.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to fetch post details");
+        throw new Error(
+          getApiMessage(data?.message, t.messages.failedFetchPostDetails, currentLanguage)
+        );
       }
 
       setPost(data.data);
     } catch (err) {
       setPost(null);
-      setError(err.message || "Failed to fetch post details");
+      setError(err.message || t.messages.failedFetchPostDetails);
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, currentLanguage, t]);
 
   const fetchExistingConnection = useCallback(async () => {
     const token = getStoredToken();
@@ -265,33 +298,33 @@ const PostDetails = () => {
   const getRequestActionState = () => {
     if (!isLoggedIn) {
       return {
-        label: "Login to Send Request",
+        label: t.actionStates.loginRequestLabel,
         disabled: true,
-        reason: "Please login as lawyer to send connection request.",
+        reason: t.actionStates.loginRequestReason,
       };
     }
 
     if (!isLawyer) {
       return {
-        label: "Only Lawyer Can Request",
+        label: t.actionStates.onlyLawyerRequestLabel,
         disabled: true,
-        reason: "Only lawyers can send connection requests to clients.",
+        reason: t.actionStates.onlyLawyerRequestReason,
       };
     }
 
     if (post?.status !== "open") {
       return {
-        label: "Request Closed",
+        label: t.actionStates.requestClosedLabel,
         disabled: true,
-        reason: "Connection request is available only for open posts.",
+        reason: t.actionStates.requestClosedReason,
       };
     }
 
     if (!hasActiveSubscription) {
       return {
-        label: "Upgrade Required",
+        label: t.actionStates.upgradeRequired,
         disabled: true,
-        reason: "You need an active subscription to send connection request.",
+        reason: t.actionStates.upgradeRequestReason,
       };
     }
 
@@ -299,19 +332,22 @@ const PostDetails = () => {
       return {
         label:
           existingConnection.status === "accepted"
-            ? "Connection Accepted"
+            ? t.actionStates.connectionAccepted
             : existingConnection.status === "pending"
-            ? "Request Pending"
+            ? t.actionStates.requestPending
             : existingConnection.status === "rejected"
-            ? "Request Rejected"
-            : "Request Exists",
+            ? t.actionStates.requestRejected
+            : t.actionStates.requestExists,
         disabled: true,
-        reason: `Connection status: ${existingConnection.status}`,
+        reason: `${t.actionStates.connectionStatus}: ${getConnectionStatusLabel(
+          existingConnection.status,
+          t
+        )}`,
       };
     }
 
     return {
-      label: "Send Connection Request",
+      label: t.actionStates.sendConnectionRequest,
       disabled: false,
       reason: "",
     };
@@ -320,54 +356,54 @@ const PostDetails = () => {
   const getProposalActionState = () => {
     if (!isLoggedIn) {
       return {
-        label: "Login to Send Proposal",
+        label: t.actionStates.loginProposalLabel,
         disabled: true,
-        reason: "Please login as lawyer to send proposal.",
+        reason: t.actionStates.loginProposalReason,
       };
     }
 
     if (!isLawyer) {
       return {
-        label: "Only Lawyer Can Send Proposal",
+        label: t.actionStates.onlyLawyerProposalLabel,
         disabled: true,
-        reason: "Clients can view case details, but only lawyers can send proposals.",
+        reason: t.actionStates.onlyLawyerProposalReason,
       };
     }
 
     if (post?.status !== "open") {
       return {
-        label: "Proposal Closed",
+        label: t.actionStates.proposalClosedLabel,
         disabled: true,
-        reason: "Proposal is available only for open posts.",
+        reason: t.actionStates.proposalClosedReason,
       };
     }
 
     if (!hasActiveSubscription) {
       return {
-        label: "Upgrade Required",
+        label: t.actionStates.upgradeRequired,
         disabled: true,
-        reason: "You need an active subscription to send proposal.",
+        reason: t.actionStates.upgradeProposalReason,
       };
     }
 
     if (!hasAcceptedConnection) {
       return {
-        label: "Connection Required",
+        label: t.actionStates.connectionRequired,
         disabled: true,
-        reason: "Client must accept your connection request before you can send proposal.",
+        reason: t.actionStates.connectionRequiredReason,
       };
     }
 
     if (alreadyBidOnPost) {
       return {
-        label: "Proposal Already Sent",
+        label: t.actionStates.proposalAlreadySent,
         disabled: true,
-        reason: "You already sent a proposal to this post.",
+        reason: t.actionStates.proposalAlreadySentReason,
       };
     }
 
     return {
-      label: "Send Proposal",
+      label: t.actionStates.sendProposal,
       disabled: false,
       reason: "",
     };
@@ -398,22 +434,22 @@ const PostDetails = () => {
     const token = getStoredToken();
 
     if (!token) {
-      setRequestError("Please login first");
+      setRequestError(t.messages.pleaseLoginFirst);
       return;
     }
 
     if (!isLawyer) {
-      setRequestError("Only lawyers can send connection request");
+      setRequestError(t.messages.onlyLawyersRequest);
       return;
     }
 
     if (!hasActiveSubscription) {
-      setRequestError("You need an active subscription to send connection request");
+      setRequestError(t.messages.activeSubscriptionRequest);
       return;
     }
 
     if (!post?.client?._id && !post?.client) {
-      setRequestError("Client information not found");
+      setRequestError(t.messages.clientInfoNotFound);
       return;
     }
 
@@ -440,17 +476,21 @@ const PostDetails = () => {
       const data = await response.json();
 
       if (!response.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to send connection request");
+        throw new Error(
+          getApiMessage(data?.message, t.messages.failedConnectionRequest, currentLanguage)
+        );
       }
 
-      setRequestSuccess(data?.message || "Connection request sent successfully");
+      setRequestSuccess(
+        getApiMessage(data?.message, t.messages.connectionRequestSent, currentLanguage)
+      );
       setExistingConnection(data.data);
 
       setTimeout(() => {
         closeRequestModal();
       }, 900);
     } catch (err) {
-      setRequestError(err.message || "Failed to send connection request");
+      setRequestError(err.message || t.messages.failedConnectionRequest);
     } finally {
       setRequestSubmitting(false);
     }
@@ -495,27 +535,27 @@ const PostDetails = () => {
     const token = getStoredToken();
 
     if (!token) {
-      setBidError("Please login first");
+      setBidError(t.messages.pleaseLoginFirst);
       return;
     }
 
     if (!isLawyer) {
-      setBidError("Only lawyers can send proposal");
+      setBidError(t.messages.onlyLawyersProposal);
       return;
     }
 
     if (!hasActiveSubscription) {
-      setBidError("You need an active subscription to send proposal");
+      setBidError(t.messages.activeSubscriptionProposal);
       return;
     }
 
     if (!hasAcceptedConnection) {
-      setBidError("Client must accept your connection request before proposal");
+      setBidError(t.messages.connectionRequiredBeforeProposal);
       return;
     }
 
     if (!bidForm.proposedFee || !bidForm.estimatedDays || !bidForm.message) {
-      setBidError("Proposed fee, estimated days and message are required");
+      setBidError(t.messages.proposalFieldsRequired);
       return;
     }
 
@@ -540,17 +580,21 @@ const PostDetails = () => {
       const data = await response.json();
 
       if (!response.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to send proposal");
+        throw new Error(
+          getApiMessage(data?.message, t.messages.failedProposal, currentLanguage)
+        );
       }
 
-      setBidSuccess(data?.message || "Proposal sent successfully");
+      setBidSuccess(
+        getApiMessage(data?.message, t.messages.proposalSent, currentLanguage)
+      );
       setPost(data.data);
 
       setTimeout(() => {
         closeBidModal();
       }, 900);
     } catch (err) {
-      setBidError(err.message || "Failed to send proposal");
+      setBidError(err.message || t.messages.failedProposal);
     } finally {
       setBidSubmitting(false);
     }
@@ -563,7 +607,7 @@ const PostDetails = () => {
           <div className="flex justify-center py-20">
             <div className="inline-flex items-center gap-3 rounded-2xl border border-cyan-100 bg-white px-6 py-4 text-sm font-black text-slate-700 shadow-sm">
               <Loader2 className="h-5 w-5 animate-spin text-cyan-700" />
-              Loading case details...
+              {t.loading.caseDetails}
             </div>
           </div>
         </div>
@@ -581,11 +625,11 @@ const PostDetails = () => {
             </div>
 
             <h1 className="mb-2 text-2xl font-black text-slate-950">
-              Case details not found
+              {t.errorState.title}
             </h1>
 
             <p className="mb-6 text-sm font-semibold text-red-600">
-              {error || "Something went wrong"}
+              {error || t.common.somethingWrong}
             </p>
 
             <div className="flex flex-wrap justify-center gap-3">
@@ -594,7 +638,7 @@ const PostDetails = () => {
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
               >
                 <ArrowLeft className="h-4 w-4" />
-                Go Back
+                {t.common.goBack}
               </button>
 
               <button
@@ -602,7 +646,7 @@ const PostDetails = () => {
                 className="inline-flex items-center gap-2 rounded-2xl bg-cyan-600 px-5 py-3 text-sm font-black text-white hover:bg-cyan-700"
               >
                 <RefreshCcw className="h-4 w-4" />
-                Try Again
+                {t.common.tryAgain}
               </button>
             </div>
           </div>
@@ -628,7 +672,7 @@ const PostDetails = () => {
             className="inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-white px-5 py-3 text-sm font-black text-cyan-700 shadow-sm hover:bg-cyan-50"
           >
             <ArrowLeft className="h-4 w-4" />
-            Back to Posts
+            {t.common.backToPosts}
           </button>
 
           <button
@@ -639,7 +683,7 @@ const PostDetails = () => {
             className="inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-3 text-sm font-black text-cyan-700 hover:bg-cyan-100"
           >
             <RefreshCcw className="h-4 w-4" />
-            Refresh
+            {t.common.refresh}
           </button>
         </motion.div>
 
@@ -657,7 +701,7 @@ const PostDetails = () => {
                     post.status
                   )}`}
                 >
-                  {post.status?.replace("_", " ") || "open"}
+                  {getStatusLabel(post.status, t)}
                 </span>
 
                 <span
@@ -665,27 +709,26 @@ const PostDetails = () => {
                     post.urgency
                   )}`}
                 >
-                  {post.urgency || "medium"} urgency
+                  {getUrgencyLabel(post.urgency, t)}
                 </span>
 
                 <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-black capitalize text-cyan-700">
-                  {post.category || "other"}
+                  {getCategoryLabel(post.category, t)}
                 </span>
 
                 {Number(post.isPriority) === 1 && (
                   <span className="rounded-full border border-amber-200 bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
-                    Priority Case
+                    {t.badges.priorityCase}
                   </span>
                 )}
               </div>
 
               <h1 className="mb-4 text-3xl font-black tracking-tight text-slate-950 md:text-5xl">
-                {post.title || "Untitled Case"}
+                {post.title || t.common.untitledCase}
               </h1>
 
               <p className="max-w-3xl text-base leading-7 text-slate-600">
-                Lawyers must send a connection request first. After the client
-                accepts it, the proposal option becomes available.
+                {t.intro.instruction}
               </p>
             </div>
 
@@ -698,17 +741,17 @@ const PostDetails = () => {
 
                   <div>
                     <h2 className="text-xl font-black text-slate-950">
-                      Case Description
+                      {t.sections.descriptionTitle}
                     </h2>
                     <p className="text-sm text-slate-500">
-                      Client provided case details.
+                      {t.sections.descriptionSubtitle}
                     </p>
                   </div>
                 </div>
 
                 <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
                   <p className="whitespace-pre-line text-sm leading-7 text-slate-700 md:text-base">
-                    {post.description || "No description provided."}
+                    {post.description || t.common.noDescription}
                   </p>
                 </div>
               </section>
@@ -721,10 +764,10 @@ const PostDetails = () => {
 
                   <div>
                     <h2 className="text-xl font-black text-slate-950">
-                      Documents
+                      {t.sections.documentsTitle}
                     </h2>
                     <p className="text-sm text-slate-500">
-                      Files or references attached by client.
+                      {t.sections.documentsSubtitle}
                     </p>
                   </div>
                 </div>
@@ -740,13 +783,13 @@ const PostDetails = () => {
                         className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
                       >
                         <FileText className="h-4 w-4 shrink-0" />
-                        <span className="truncate">Document {index + 1}</span>
+                        <span className="truncate">{t.sections.document} {index + 1}</span>
                       </a>
                     ))}
                   </div>
                 ) : (
                   <div className="rounded-3xl border border-slate-200 bg-white p-5 text-sm font-semibold text-slate-500">
-                    No documents attached.
+                    {t.sections.noDocuments}
                   </div>
                 )}
               </section>
@@ -759,10 +802,10 @@ const PostDetails = () => {
 
                   <div>
                     <h2 className="text-xl font-black text-slate-950">
-                      Proposal Activity
+                      {t.sections.proposalActivityTitle}
                     </h2>
                     <p className="text-sm text-slate-500">
-                      Total submitted proposals for this post.
+                      {t.sections.proposalActivitySubtitle}
                     </p>
                   </div>
                 </div>
@@ -770,7 +813,7 @@ const PostDetails = () => {
                 <div className="rounded-3xl border border-slate-200 bg-white p-5">
                   <div className="mb-4 flex items-center justify-between">
                     <p className="text-sm font-bold text-slate-500">
-                      Total proposals
+                      {t.sections.totalProposals}
                     </p>
 
                     <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-black text-cyan-700">
@@ -780,11 +823,11 @@ const PostDetails = () => {
 
                   {acceptedBid ? (
                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-700">
-                      This case has an accepted proposal.
+                      {t.sections.acceptedProposal}
                     </div>
                   ) : (
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-500">
-                      No proposal has been accepted yet.
+                      {t.sections.noAcceptedProposal}
                     </div>
                   )}
                 </div>
@@ -806,10 +849,10 @@ const PostDetails = () => {
 
                 <div>
                   <h2 className="text-lg font-black text-slate-950">
-                    Case Summary
+                    {t.summary.title}
                   </h2>
                   <p className="text-sm text-slate-500">
-                    Important case information.
+                    {t.summary.subtitle}
                   </p>
                 </div>
               </div>
@@ -818,44 +861,44 @@ const PostDetails = () => {
                 <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                   <span className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                     <BadgeDollarSign className="h-4 w-4" />
-                    Budget
+                    {t.summary.budget}
                   </span>
 
                   <span className="text-right text-sm font-black text-slate-900">
-                    {formatBudget(post.budgetMin, post.budgetMax)}
+                    {formatBudget(post.budgetMin, post.budgetMax, t)}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                   <span className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                     <MapPin className="h-4 w-4" />
-                    Location
+                    {t.summary.location}
                   </span>
 
                   <span className="text-right text-sm font-black text-slate-900">
-                    {locationText || "Not specified"}
+                    {locationText || t.common.notSpecified}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                   <span className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                     <CalendarDays className="h-4 w-4" />
-                    Posted
+                    {t.summary.posted}
                   </span>
 
                   <span className="text-right text-sm font-black text-slate-900">
-                    {formatDate(post.createdAt)}
+                    {formatDate(post.createdAt, t, dateLocale)}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                   <span className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                     <Clock className="h-4 w-4" />
-                    Updated
+                    {t.summary.updated}
                   </span>
 
                   <span className="text-right text-sm font-black text-slate-900">
-                    {formatDate(post.updatedAt)}
+                    {formatDate(post.updatedAt, t, dateLocale)}
                   </span>
                 </div>
               </div>
@@ -869,10 +912,10 @@ const PostDetails = () => {
 
                 <div>
                   <h2 className="text-lg font-black text-slate-950">
-                    Client Information
+                    {t.clientInfo.title}
                   </h2>
                   <p className="text-sm text-slate-500">
-                    Basic public client info.
+                    {t.clientInfo.subtitle}
                   </p>
                 </div>
               </div>
@@ -885,18 +928,18 @@ const PostDetails = () => {
 
                   <div className="min-w-0">
                     <p className="truncate text-base font-black text-slate-950">
-                      {post.client?.name || "Unknown Client"}
+                      {post.client?.name || t.common.unknownClient}
                     </p>
 
                     <p className="truncate text-sm font-semibold text-slate-500">
-                      {post.client?.email || "Email hidden"}
+                      {post.client?.email || t.common.emailHidden}
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 rounded-2xl border border-cyan-200 bg-white px-4 py-3 text-sm font-bold text-cyan-700">
                   <ShieldCheck className="h-4 w-4" />
-                  Platform protected contact
+                  {t.clientInfo.protectedContact}
                 </div>
               </div>
             </div>
@@ -915,13 +958,13 @@ const PostDetails = () => {
                   <div>
                     <h2 className="text-lg font-black text-slate-950">
                       {hasAcceptedConnection
-                        ? "Step 2: Send Proposal"
-                        : "Step 1: Connection Request"}
+                        ? t.lawyerBox.step2Title
+                        : t.lawyerBox.step1Title}
                     </h2>
                     <p className="text-sm text-slate-500">
                       {hasAcceptedConnection
-                        ? "Client accepted your request. You can now send proposal."
-                        : "Send request first. Proposal unlocks after approval."}
+                        ? t.lawyerBox.step2Subtitle
+                        : t.lawyerBox.step1Subtitle}
                     </p>
                   </div>
                 </div>
@@ -929,7 +972,7 @@ const PostDetails = () => {
                 {connectionLoading && (
                   <div className="mb-4 flex items-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-bold text-cyan-700">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Checking connection...
+                    {t.loading.checkingConnection}
                   </div>
                 )}
 
@@ -939,7 +982,7 @@ const PostDetails = () => {
                       existingConnection.status
                     )}`}
                   >
-                    Connection status: {existingConnection.status}
+                    {t.actionStates.connectionStatus}: {getConnectionStatusLabel(existingConnection.status, t)}
                   </div>
                 )}
 
@@ -953,8 +996,7 @@ const PostDetails = () => {
                 {hasPendingConnection && (
                   <div className="mb-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
                     <Hourglass className="mt-0.5 h-4 w-4 shrink-0" />
-                    Waiting for client approval. Proposal button will unlock
-                    after acceptance.
+                    {t.lawyerBox.waitingApproval}
                   </div>
                 )}
 
@@ -1008,16 +1050,16 @@ const PostDetails = () => {
             {!isLoggedIn && (
               <div className="rounded-[32px] border border-cyan-100 bg-white p-6 shadow-xl">
                 <h2 className="mb-2 text-lg font-black text-slate-950">
-                  Want to respond to this case?
+                  {t.loginBox.title}
                 </h2>
                 <p className="mb-4 text-sm text-slate-500">
-                  Login as a lawyer to send connection request and proposal.
+                  {t.loginBox.description}
                 </p>
                 <Link
                   to="/sign-in"
                   className="flex w-full items-center justify-center rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-3 text-sm font-black text-cyan-700 hover:bg-cyan-100"
                 >
-                  Go to Login
+                  {t.loginBox.button}
                 </Link>
               </div>
             )}
@@ -1044,15 +1086,15 @@ const PostDetails = () => {
                 <div>
                   <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-black text-emerald-700">
                     <UserPlus className="h-3.5 w-3.5" />
-                    Connection Request
+                    {t.requestModal.badge}
                   </div>
 
                   <h2 className="text-2xl font-black text-slate-950">
-                    Request Client Connection
+                    {t.requestModal.title}
                   </h2>
 
                   <p className="mt-2 text-sm text-slate-600">
-                    After the client accepts, you can send a proposal.
+                    {t.requestModal.subtitle}
                   </p>
                 </div>
 
@@ -1082,7 +1124,7 @@ const PostDetails = () => {
 
                 <div className="mb-6">
                   <label className="mb-2 block text-sm font-black text-slate-800">
-                    Request Message
+                    {t.requestModal.messageLabel}
                   </label>
 
                   <textarea
@@ -1090,12 +1132,12 @@ const PostDetails = () => {
                     onChange={(e) => setRequestMessage(e.target.value)}
                     rows={5}
                     maxLength={1000}
-                    placeholder="Example: Hello, I reviewed your case and would like to connect to discuss how I can help."
+                    placeholder={t.requestModal.messagePlaceholder}
                     className="w-full resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
                   />
 
                   <p className="mt-2 text-xs font-semibold text-slate-500">
-                    {requestMessage.length}/1000 characters
+                    {requestMessage.length}/1000 {t.common.characters}
                   </p>
                 </div>
 
@@ -1106,7 +1148,7 @@ const PostDetails = () => {
                     disabled={requestSubmitting}
                     className="rounded-2xl border border-slate-300 bg-white px-6 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   >
-                    Cancel
+                    {t.common.cancel}
                   </button>
 
                   <button
@@ -1117,12 +1159,12 @@ const PostDetails = () => {
                     {requestSubmitting ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        Sending...
+                        {t.common.sending}
                       </>
                     ) : (
                       <>
                         <UserPlus className="h-4 w-4" />
-                        Send Request
+                        {t.requestModal.sendButton}
                       </>
                     )}
                   </button>
@@ -1152,7 +1194,7 @@ const PostDetails = () => {
                 <div>
                   <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-black text-cyan-700">
                     <Send className="h-3.5 w-3.5" />
-                    Send Proposal
+                    {t.proposalModal.badge}
                   </div>
 
                   <h2 className="text-2xl font-black text-slate-950">
@@ -1160,7 +1202,7 @@ const PostDetails = () => {
                   </h2>
 
                   <p className="mt-2 text-sm text-slate-600">
-                    Submit your legal service proposal to the client.
+                    {t.proposalModal.subtitle}
                   </p>
                 </div>
 
@@ -1191,7 +1233,7 @@ const PostDetails = () => {
                 <div className="mb-4 grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-sm font-black text-slate-800">
-                      Proposed Fee
+                      {t.proposalModal.feeLabel}
                     </label>
 
                     <input
@@ -1200,7 +1242,7 @@ const PostDetails = () => {
                       value={bidForm.proposedFee}
                       onChange={handleBidFormChange}
                       min="0"
-                      placeholder="Example: 5000"
+                      placeholder={t.proposalModal.feePlaceholder}
                       className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
                       required
                     />
@@ -1208,7 +1250,7 @@ const PostDetails = () => {
 
                   <div>
                     <label className="mb-2 block text-sm font-black text-slate-800">
-                      Estimated Days
+                      {t.proposalModal.daysLabel}
                     </label>
 
                     <input
@@ -1217,7 +1259,7 @@ const PostDetails = () => {
                       value={bidForm.estimatedDays}
                       onChange={handleBidFormChange}
                       min="1"
-                      placeholder="Example: 7"
+                      placeholder={t.proposalModal.daysPlaceholder}
                       className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
                       required
                     />
@@ -1226,7 +1268,7 @@ const PostDetails = () => {
 
                 <div className="mb-6">
                   <label className="mb-2 block text-sm font-black text-slate-800">
-                    Proposal Message
+                    {t.proposalModal.messageLabel}
                   </label>
 
                   <textarea
@@ -1235,13 +1277,13 @@ const PostDetails = () => {
                     onChange={handleBidFormChange}
                     rows={6}
                     maxLength={2000}
-                    placeholder="Write your proposal, experience, service plan, and why the client should choose you..."
+                    placeholder={t.proposalModal.messagePlaceholder}
                     className="w-full resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
                     required
                   />
 
                   <p className="mt-2 text-xs font-semibold text-slate-500">
-                    {bidForm.message.length}/2000 characters
+                    {bidForm.message.length}/2000 {t.common.characters}
                   </p>
                 </div>
 
@@ -1252,7 +1294,7 @@ const PostDetails = () => {
                     disabled={bidSubmitting}
                     className="rounded-2xl border border-slate-300 bg-white px-6 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   >
-                    Cancel
+                    {t.common.cancel}
                   </button>
 
                   <button
@@ -1263,12 +1305,12 @@ const PostDetails = () => {
                     {bidSubmitting ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        Sending...
+                        {t.common.sending}
                       </>
                     ) : (
                       <>
                         <Send className="h-4 w-4" />
-                        Send Proposal
+                        {t.proposalModal.badge}
                       </>
                     )}
                   </button>

@@ -6,6 +6,7 @@ import {
   registerAdmin,
   loginUser,
   getMe,
+  updateMyProfile,
   completeLawyerProfile,
   updateMyLawyerProfile,
   getPublicLawyers,
@@ -28,6 +29,9 @@ router.post("/register/admin", registerAdmin);
 router.post("/login", loginUser);
 
 router.get("/me", protect, getMe);
+
+// Client self profile update
+router.patch("/profile", protect, upload.single("profileImage"), updateMyProfile);
 
 router.put(
   "/lawyer/profile/complete",

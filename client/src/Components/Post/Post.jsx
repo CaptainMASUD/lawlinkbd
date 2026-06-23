@@ -29,24 +29,18 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { restoreUser } from "../../Redux/UserSlice/UserSlice";
+import postI18n from "../../json/post.json";
 
-const API_BASE_URL = "http://localhost:4000/api";
+const normalizeApiBaseUrl = (value = "") => {
+  const raw = String(value || "").trim() || "http://localhost:4000";
+  const clean = raw.replace(/\/+$/, "");
+  return clean.endsWith("/api") ? clean : `${clean}/api`;
+};
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 const API_URL = `${API_BASE_URL}/posts`;
 
 const categoryOptions = [
-  "family",
-  "criminal",
-  "property",
-  "corporate",
-  "civil",
-  "tax",
-  "labour",
-  "cyber",
-  "immigration",
-  "other",
-];
-
-const postCategoryOptions = [
   "family",
   "criminal",
   "property",
@@ -82,6 +76,12 @@ const initialCreatePostForm = {
   district: "",
   documents: "",
   expiresAt: "",
+};
+
+const initialBidForm = {
+  proposedFee: "",
+  estimatedDays: "",
+  message: "",
 };
 
 const getStoredToken = () => {
@@ -128,34 +128,11 @@ const getBooleanFeature = (subscription, key) => {
   return Boolean(value);
 };
 
-const formatLimit = (limit) => {
-  if (isUnlimitedValue(limit)) return "Unlimited";
-  return Number(limit || 0).toLocaleString("en-BD");
-};
-
-const formatBudget = (min, max) => {
-  const minValue = Number(min || 0);
-  const maxValue = Number(max || 0);
-
-  if (!minValue && !maxValue) return "Budget not specified";
-  if (minValue && maxValue) return `৳${minValue} - ৳${maxValue}`;
-  if (!minValue && maxValue) return `Up to ৳${maxValue}`;
-
-  return `From ৳${minValue}`;
-};
-
-const formatDate = (dateString) => {
-  if (!dateString) return "Recently posted";
-
-  const date = new Date(dateString);
-
-  if (Number.isNaN(date.getTime())) return "Recently posted";
-
-  return date.toLocaleDateString("en-BD", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+const applyTemplate = (template = "", values = {}) => {
+  return Object.entries(values).reduce(
+    (text, [key, value]) => text.replaceAll(`{{${key}}}`, String(value)),
+    template
+  );
 };
 
 const formatOptionLabel = (value) => {
@@ -166,6 +143,53 @@ const formatOptionLabel = (value) => {
     .split(" ")
     .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
     .join(" ");
+};
+
+const getOptionLabel = (t, type, value) => {
+  if (!value) return "";
+  return t?.options?.[type]?.[value] || formatOptionLabel(value);
+};
+
+const getLoadedPostsLabel = (count, t) => {
+  return Number(count) === 1 ? t.common.loadedPost : t.common.loadedPosts;
+};
+
+const formatLimit = (limit, t, locale = "en-BD") => {
+  if (isUnlimitedValue(limit)) return t.common.unlimited;
+  return Number(limit || 0).toLocaleString(locale);
+};
+
+const formatMoney = (amount, locale = "en-BD") => {
+  return `৳${Number(amount || 0).toLocaleString(locale)}`;
+};
+
+const formatBudget = (min, max, t, locale = "en-BD") => {
+  const minValue = Number(min || 0);
+  const maxValue = Number(max || 0);
+
+  if (!minValue && !maxValue) return t.common.budgetNotSpecified;
+  if (minValue && maxValue) {
+    return `${formatMoney(minValue, locale)} - ${formatMoney(maxValue, locale)}`;
+  }
+  if (!minValue && maxValue) {
+    return `${t.common.upTo} ${formatMoney(maxValue, locale)}`;
+  }
+
+  return `${t.common.from} ${formatMoney(minValue, locale)}`;
+};
+
+const formatDate = (dateString, t, locale = "en-BD") => {
+  if (!dateString) return t.common.recentlyPosted;
+
+  const date = new Date(dateString);
+
+  if (Number.isNaN(date.getTime())) return t.common.recentlyPosted;
+
+  return date.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 };
 
 const isDateInRange = (dateValue, startDate, endDate) => {
@@ -186,28 +210,32 @@ const isDateInRange = (dateValue, startDate, endDate) => {
   return date >= start && date <= end;
 };
 
-const getApiErrorMessage = (payload, fallback = "Request failed") => {
-  if (!payload) return fallback;
+const getApiErrorMessage = (payload, t, fallback = "") => {
+  const safeFallback = fallback || t.errors.requestFailed;
+
+  if (!payload) return safeFallback;
 
   if (
     payload.message?.toLowerCase?.().includes("case post limit reached") &&
     payload.limit !== undefined
   ) {
-    return `Case post limit reached. Used ${payload.used || 0} of ${
-      payload.limit
-    } posts in this subscription period.`;
+    return applyTemplate(t.errors.casePostLimitApi, {
+      used: payload.used || 0,
+      limit: payload.limit,
+    });
   }
 
   if (
     payload.message?.toLowerCase?.().includes("proposal limit reached") &&
     payload.limit !== undefined
   ) {
-    return `Proposal limit reached. Used ${payload.used || 0} of ${
-      payload.limit
-    } proposals in this subscription period.`;
+    return applyTemplate(t.errors.proposalLimitApi, {
+      used: payload.used || 0,
+      limit: payload.limit,
+    });
   }
 
-  return payload.message || fallback;
+  return payload.message || safeFallback;
 };
 
 const hasExplicitVerificationValue = (user) => {
@@ -246,17 +274,54 @@ const isVerifiedUser = (user) => {
   );
 };
 
+const getStatusClasses = (status) => {
+  switch (status) {
+    case "open":
+      return "bg-cyan-50 text-cyan-700 border border-cyan-200";
+    case "in_progress":
+      return "bg-blue-50 text-blue-700 border border-blue-200";
+    case "closed":
+      return "bg-slate-100 text-slate-700 border border-slate-200";
+    case "cancelled":
+      return "bg-red-50 text-red-700 border border-red-200";
+    default:
+      return "bg-slate-100 text-slate-700 border border-slate-200";
+  }
+};
+
+const getUrgencyClasses = (urgency) => {
+  switch (urgency) {
+    case "high":
+      return "bg-rose-50 text-rose-700 border border-rose-200";
+    case "medium":
+      return "bg-amber-50 text-amber-700 border border-amber-200";
+    case "low":
+      return "bg-emerald-50 text-emerald-700 border border-emerald-200";
+    default:
+      return "bg-slate-100 text-slate-700 border border-slate-200";
+  }
+};
+
 const Post = () => {
   const dispatch = useDispatch();
   const reduxCurrentUser = useSelector((state) => state.user.currentUser);
+  const currentLanguage = useSelector(
+    (state) => state.language?.currentLanguage || "en"
+  );
   const didRestoreUser = useRef(false);
 
   const [currentUser, setCurrentUser] = useState(
     reduxCurrentUser || getStoredUser()
   );
 
-  const [posts, setPosts] = useState([]);
+  const t = useMemo(
+    () => postI18n[currentLanguage]?.post || postI18n.en.post,
+    [currentLanguage]
+  );
 
+  const locale = postI18n[currentLanguage]?.locale || "en-BD";
+
+  const [posts, setPosts] = useState([]);
   const [postsMeta, setPostsMeta] = useState({
     limit: 20,
     hasNextPage: false,
@@ -283,6 +348,7 @@ const Post = () => {
   const [bidSubmitting, setBidSubmitting] = useState(false);
   const [bidError, setBidError] = useState("");
   const [bidSuccess, setBidSuccess] = useState("");
+  const [bidForm, setBidForm] = useState(initialBidForm);
 
   const [isCreatePostModalOpen, setIsCreatePostModalOpen] = useState(false);
   const [createPostSubmitting, setCreatePostSubmitting] = useState(false);
@@ -296,12 +362,6 @@ const Post = () => {
   const [clientUsage, setClientUsage] = useState({
     usedPosts: 0,
     loading: false,
-  });
-
-  const [bidForm, setBidForm] = useState({
-    proposedFee: "",
-    estimatedDays: "",
-    message: "",
   });
 
   const userId = getUserId(currentUser);
@@ -424,17 +484,17 @@ const Post = () => {
       const data = await response.json();
 
       if (!response.ok || !data?.success) {
-        throw new Error(data?.message || "No active subscription found");
+        throw new Error(data?.message || t.errors.noActiveSubscription);
       }
 
       setCurrentSubscription(data.data || null);
     } catch (err) {
       setCurrentSubscription(null);
-      setSubscriptionError(err.message || "No active subscription found");
+      setSubscriptionError(err.message || t.errors.noActiveSubscription);
     } finally {
       setSubscriptionLoading(false);
     }
-  }, [userId, userRole]);
+  }, [userId, userRole, t.errors.noActiveSubscription]);
 
   useEffect(() => {
     fetchCurrentSubscription();
@@ -463,7 +523,7 @@ const Post = () => {
       const data = await response.json();
 
       if (!response.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to fetch usage");
+        throw new Error(data?.message || t.errors.failedUsage);
       }
 
       const usedPosts = (data.data || []).filter((post) =>
@@ -490,6 +550,7 @@ const Post = () => {
     currentSubscription?._id,
     currentSubscription?.startDate,
     currentSubscription?.endDate,
+    t.errors.failedUsage,
   ]);
 
   useEffect(() => {
@@ -546,12 +607,12 @@ const Post = () => {
       const data = await response.json();
 
       if (!response.ok || !data?.success) {
-        throw new Error(data?.message || "Failed to fetch posts");
+        throw new Error(data?.message || t.errors.failedPosts);
       }
 
       return data;
     },
-    [buildQuery]
+    [buildQuery, t.errors.failedPosts]
   );
 
   const fetchPosts = useCallback(
@@ -605,7 +666,7 @@ const Post = () => {
           }
         );
       } catch (err) {
-        setError(err.message || "Failed to fetch posts");
+        setError(err.message || t.errors.failedPosts);
 
         if (!append) {
           setPosts([]);
@@ -620,7 +681,7 @@ const Post = () => {
         setLoadMoreLoading(false);
       }
     },
-    [selectedStatus, fetchSingleStatusPosts]
+    [selectedStatus, fetchSingleStatusPosts, t.errors.failedPosts]
   );
 
   useEffect(() => {
@@ -659,34 +720,6 @@ const Post = () => {
     });
   }, [posts, selectedLocation]);
 
-  const getUrgencyClasses = (urgency) => {
-    switch (urgency) {
-      case "high":
-        return "bg-rose-50 text-rose-700 border border-rose-200";
-      case "medium":
-        return "bg-amber-50 text-amber-700 border border-amber-200";
-      case "low":
-        return "bg-emerald-50 text-emerald-700 border border-emerald-200";
-      default:
-        return "bg-slate-100 text-slate-700 border border-slate-200";
-    }
-  };
-
-  const getStatusClasses = (status) => {
-    switch (status) {
-      case "open":
-        return "bg-cyan-50 text-cyan-700 border border-cyan-200";
-      case "in_progress":
-        return "bg-blue-50 text-blue-700 border border-blue-200";
-      case "closed":
-        return "bg-slate-100 text-slate-700 border border-slate-200";
-      case "cancelled":
-        return "bg-red-50 text-red-700 border border-red-200";
-      default:
-        return "bg-slate-100 text-slate-700 border border-slate-200";
-    }
-  };
-
   const resetFilters = () => {
     setSearch("");
     setSelectedCategory("all");
@@ -715,7 +748,7 @@ const Post = () => {
     setCreatePostSuccess("");
 
     if (!isLoggedIn) {
-      setCreatePostError("Please login first.");
+      setCreatePostError(t.errors.pleaseLogin);
       setIsCreatePostModalOpen(true);
       return;
     }
@@ -726,19 +759,19 @@ const Post = () => {
     }
 
     if (!isClient) {
-      setCreatePostError("Only clients can create case posts.");
+      setCreatePostError(t.errors.onlyClientsCreate);
       setIsCreatePostModalOpen(true);
       return;
     }
 
     if (!hasActiveSubscription) {
-      setCreatePostError("You need an active subscription to create case posts.");
+      setCreatePostError(t.errors.needActiveSubscriptionCreate);
       setIsCreatePostModalOpen(true);
       return;
     }
 
     if (casePostLimit <= 0) {
-      setCreatePostError("Your current plan does not allow case posting.");
+      setCreatePostError(t.errors.planNoPost);
       setIsCreatePostModalOpen(true);
       return;
     }
@@ -748,7 +781,10 @@ const Post = () => {
       clientUsage.usedPosts >= casePostLimit
     ) {
       setCreatePostError(
-        `Case post limit reached. Used ${clientUsage.usedPosts} of ${casePostLimit} posts.`
+        applyTemplate(t.errors.limitReached, {
+          used: clientUsage.usedPosts,
+          limit: casePostLimit,
+        })
       );
       setIsCreatePostModalOpen(true);
       return;
@@ -781,31 +817,29 @@ const Post = () => {
     const token = getStoredToken();
 
     if (!token || !isLoggedIn) {
-      setCreatePostError("Please login first.");
+      setCreatePostError(t.errors.pleaseLogin);
       return;
     }
 
     if (!isAdmin && !isClient) {
-      setCreatePostError("Only clients can create case posts.");
+      setCreatePostError(t.errors.onlyClientsCreate);
       return;
     }
 
     if (!isAdmin && !hasActiveSubscription) {
-      setCreatePostError("You need an active subscription to create case posts.");
+      setCreatePostError(t.errors.needActiveSubscriptionCreate);
       return;
     }
 
     if (!isAdmin && !canClientCreatePost) {
       setCreatePostError(
-        isPaidSubscription
-          ? "Your case post limit is reached for this subscription period."
-          : "Your case post limit is reached. Please upgrade your plan."
+        isPaidSubscription ? t.errors.paidLimitReached : t.errors.freeLimitReached
       );
       return;
     }
 
     if (!createPostForm.title.trim() || !createPostForm.description.trim()) {
-      setCreatePostError("Title and description are required.");
+      setCreatePostError(t.errors.titleDescriptionRequired);
       return;
     }
 
@@ -813,7 +847,7 @@ const Post = () => {
     const maxBudget = Number(createPostForm.budgetMax || 0);
 
     if (maxBudget > 0 && minBudget > maxBudget) {
-      setCreatePostError("Maximum budget must be greater than minimum budget.");
+      setCreatePostError(t.errors.maxBudgetGreater);
       return;
     }
 
@@ -848,14 +882,14 @@ const Post = () => {
 
       if (!response.ok || !data?.success) {
         const apiError = new Error(
-          getApiErrorMessage(data, "Failed to create post")
+          getApiErrorMessage(data, t, t.errors.failedCreatePost)
         );
         apiError.payload = data;
         throw apiError;
       }
 
-      setCreatePostSuccess(data.message || "Post created successfully.");
-      setSuccessMessage(data.message || "Post created successfully.");
+      setCreatePostSuccess(data.message || t.messages.postCreated);
+      setSuccessMessage(data.message || t.messages.postCreated);
 
       setPosts((prev) => [data.data, ...prev]);
 
@@ -871,7 +905,7 @@ const Post = () => {
       }, 900);
     } catch (err) {
       setCreatePostError(
-        getApiErrorMessage(err.payload, err.message || "Failed to create post")
+        getApiErrorMessage(err.payload, t, err.message || t.errors.failedCreatePost)
       );
     } finally {
       setCreatePostSubmitting(false);
@@ -882,11 +916,7 @@ const Post = () => {
     setSelectedPost(post);
     setBidError("");
     setBidSuccess("");
-    setBidForm({
-      proposedFee: "",
-      estimatedDays: "",
-      message: "",
-    });
+    setBidForm(initialBidForm);
     setIsBidModalOpen(true);
   };
 
@@ -897,11 +927,7 @@ const Post = () => {
     setSelectedPost(null);
     setBidError("");
     setBidSuccess("");
-    setBidForm({
-      proposedFee: "",
-      estimatedDays: "",
-      message: "",
-    });
+    setBidForm(initialBidForm);
   };
 
   const handleBidFormChange = (e) => {
@@ -917,39 +943,39 @@ const Post = () => {
     e.preventDefault();
 
     if (!selectedPost?._id) {
-      setBidError("Post not selected.");
+      setBidError(t.errors.postNotSelected);
       return;
     }
 
     const token = getStoredToken();
 
     if (!token || !isLoggedIn) {
-      setBidError("Please login first.");
+      setBidError(t.errors.pleaseLogin);
       return;
     }
 
     if (!isLawyer && !isAdmin) {
-      setBidError("Only lawyers can send proposals.");
+      setBidError(t.errors.onlyLawyersProposal);
       return;
     }
 
     if (!isAdmin && !isAccountVerified) {
-      setBidError("Please login with a verified lawyer account.");
+      setBidError(t.errors.verifiedLawyerRequired);
       return;
     }
 
     if (!isAdmin && !hasActiveSubscription) {
-      setBidError("You need an active subscription to send proposals.");
+      setBidError(t.errors.needActiveSubscriptionProposal);
       return;
     }
 
     if (!isAdmin && proposalLimit <= 0) {
-      setBidError("Your current plan does not allow proposal sending.");
+      setBidError(t.errors.planNoProposal);
       return;
     }
 
     if (!bidForm.proposedFee || !bidForm.estimatedDays || !bidForm.message) {
-      setBidError("Proposed fee, estimated days and message are required.");
+      setBidError(t.errors.proposalFieldsRequired);
       return;
     }
 
@@ -975,13 +1001,13 @@ const Post = () => {
 
       if (!response.ok || !data?.success) {
         const apiError = new Error(
-          getApiErrorMessage(data, "Failed to send proposal")
+          getApiErrorMessage(data, t, t.errors.failedSendProposal)
         );
         apiError.payload = data;
         throw apiError;
       }
 
-      setBidSuccess(data?.message || "Proposal sent successfully.");
+      setBidSuccess(data?.message || t.messages.proposalSent);
 
       setPosts((prev) =>
         prev.map((item) => (item._id === selectedPost._id ? data.data : item))
@@ -992,7 +1018,7 @@ const Post = () => {
       }, 900);
     } catch (err) {
       setBidError(
-        getApiErrorMessage(err.payload, err.message || "Failed to send proposal")
+        getApiErrorMessage(err.payload, t, err.message || t.errors.failedSendProposal)
       );
     } finally {
       setBidSubmitting(false);
@@ -1016,34 +1042,16 @@ const Post = () => {
     if (!isLoggedIn) {
       return {
         type: "login",
-        label: "Login",
+        label: t.actions.login,
         disabled: false,
         reason: "",
       };
     }
 
-    if (isAdmin) {
+    if (isAdmin || isClient || !isLawyer) {
       return {
         type: "details",
-        label: "View Details",
-        disabled: false,
-        reason: "",
-      };
-    }
-
-    if (isClient) {
-      return {
-        type: "details",
-        label: "View Details",
-        disabled: false,
-        reason: "",
-      };
-    }
-
-    if (!isLawyer) {
-      return {
-        type: "details",
-        label: "View Details",
+        label: t.actions.viewDetails,
         disabled: false,
         reason: "",
       };
@@ -1052,7 +1060,7 @@ const Post = () => {
     if (!isAccountVerified) {
       return {
         type: "login",
-        label: "Login",
+        label: t.actions.login,
         disabled: false,
         reason: "",
       };
@@ -1061,42 +1069,42 @@ const Post = () => {
     if (post.status !== "open") {
       return {
         type: "proposal",
-        label: "Closed",
+        label: t.actions.closed,
         disabled: true,
-        reason: "Proposal is available only for open posts.",
+        reason: t.actions.reasons.closed,
       };
     }
 
     if (!hasActiveSubscription) {
       return {
         type: "proposal",
-        label: "Subscription Required",
+        label: t.actions.subscriptionRequired,
         disabled: true,
-        reason: "Active subscription required.",
+        reason: t.actions.reasons.subscription,
       };
     }
 
     if (proposalLimit <= 0) {
       return {
         type: "proposal",
-        label: "Not Allowed",
+        label: t.actions.notAllowed,
         disabled: true,
-        reason: "Your plan does not allow proposals.",
+        reason: t.actions.reasons.notAllowed,
       };
     }
 
     if (alreadyBidOnPost(post)) {
       return {
         type: "proposal",
-        label: "Proposal Sent",
+        label: t.actions.proposalSent,
         disabled: true,
-        reason: "You already sent a proposal.",
+        reason: t.actions.reasons.alreadyBid,
       };
     }
 
     return {
       type: "proposal",
-      label: "Send Proposal",
+      label: t.actions.sendProposal,
       disabled: false,
       reason: "",
     };
@@ -1114,11 +1122,11 @@ const Post = () => {
           >
             <span className="inline-flex items-center gap-2 rounded-full border border-cyan-100 bg-cyan-50 px-3.5 py-1.5 text-xs font-black text-cyan-700">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Legal Case Marketplace
+              {t.hero.badge}
             </span>
 
             <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl md:text-5xl">
-              Legal Case Posts
+              {t.hero.title}
             </h1>
 
             <div className="mx-auto mt-7 flex max-w-3xl items-center gap-3">
@@ -1129,7 +1137,7 @@ const Post = () => {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by title, description, category..."
+                  placeholder={t.hero.searchPlaceholder}
                   className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm font-bold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                 />
               </div>
@@ -1142,7 +1150,7 @@ const Post = () => {
                     ? "border-cyan-600 bg-cyan-700 text-white shadow-lg shadow-cyan-700/20"
                     : "border-slate-200 bg-slate-50 text-slate-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
                 }`}
-                aria-label="Toggle filters"
+                aria-label={t.filters.toggleAria}
               >
                 {showFilters ? (
                   <X className="h-4 w-4" />
@@ -1160,27 +1168,27 @@ const Post = () => {
 
             <div className="mt-4 flex flex-col items-center justify-center gap-3 text-xs font-bold text-slate-500 sm:flex-row">
               <span>
-                Showing{" "}
+                {t.common.showing}{" "}
                 <span className="font-black text-slate-950">
                   {filteredPosts.length}
                 </span>{" "}
-                loaded post{filteredPosts.length !== 1 ? "s" : ""}
+                {getLoadedPostsLabel(filteredPosts.length, t)}
               </span>
 
               <span className="hidden h-1.5 w-1.5 rounded-full bg-slate-300 sm:block" />
 
               <span className="inline-flex items-center gap-2 rounded-full bg-cyan-50 px-3.5 py-1.5 text-xs font-black text-cyan-700 ring-1 ring-cyan-100">
                 <Briefcase className="h-3.5 w-3.5" />
-                Status:{" "}
+                {t.common.status}:{" "}
                 {selectedStatus === "all"
-                  ? "All"
-                  : formatOptionLabel(selectedStatus)}
+                  ? t.common.all
+                  : getOptionLabel(t, "status", selectedStatus)}
               </span>
 
               {isAdmin && (
                 <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  Admin access unlocked
+                  {t.common.adminAccessUnlocked}
                 </span>
               )}
 
@@ -1190,7 +1198,7 @@ const Post = () => {
                   className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3.5 py-1.5 text-xs font-black text-amber-700 ring-1 ring-amber-100"
                 >
                   <LogIn className="h-3.5 w-3.5" />
-                  Login to access actions
+                  {t.hero.loginToAccess}
                 </Link>
               )}
             </div>
@@ -1208,7 +1216,7 @@ const Post = () => {
                   ) : (
                     <PlusCircle className="h-4 w-4" />
                   )}
-                  Add Post
+                  {t.common.addPost}
                 </button>
               )}
 
@@ -1218,7 +1226,7 @@ const Post = () => {
                   className="inline-flex items-center gap-2 rounded-2xl bg-cyan-700 px-5 py-3 text-sm font-black text-white shadow-lg shadow-cyan-700/20 transition hover:bg-cyan-800"
                 >
                   <LogIn className="h-4 w-4" />
-                  Login
+                  {t.common.login}
                 </Link>
               )}
 
@@ -1228,7 +1236,7 @@ const Post = () => {
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
               >
                 <RefreshCcw className="h-4 w-4" />
-                Refresh
+                {t.common.refresh}
               </button>
             </div>
           </motion.div>
@@ -1249,10 +1257,10 @@ const Post = () => {
                 <div className="mb-5 flex flex-col gap-3 border-b border-slate-100 pb-5 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-base font-black text-slate-950">
-                      Filter Posts
+                      {t.filters.title}
                     </h2>
                     <p className="mt-1 text-xs font-medium text-slate-500">
-                      Choose filters to narrow down the legal case posts list.
+                      {t.filters.description}
                     </p>
                   </div>
 
@@ -1262,7 +1270,7 @@ const Post = () => {
                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
                   >
                     <RefreshCcw className="h-3.5 w-3.5" />
-                    Reset Filters
+                    {t.filters.reset}
                   </button>
                 </div>
 
@@ -1272,10 +1280,10 @@ const Post = () => {
                     onChange={(e) => setSelectedCategory(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold capitalize text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="all">All Categories</option>
+                    <option value="all">{t.filters.allCategories}</option>
                     {categoryOptions.map((category) => (
                       <option key={category} value={category}>
-                        {formatOptionLabel(category)}
+                        {getOptionLabel(t, "category", category)}
                       </option>
                     ))}
                   </select>
@@ -1285,10 +1293,10 @@ const Post = () => {
                     onChange={(e) => setSelectedUrgency(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="all">All Urgency</option>
+                    <option value="all">{t.filters.allUrgency}</option>
                     {urgencyOptions.map((urgency) => (
                       <option key={urgency} value={urgency}>
-                        {formatOptionLabel(urgency)} Urgency
+                        {getOptionLabel(t, "urgency", urgency)}
                       </option>
                     ))}
                   </select>
@@ -1298,10 +1306,10 @@ const Post = () => {
                     onChange={(e) => setSelectedStatus(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="all">All Status</option>
+                    <option value="all">{t.filters.allStatus}</option>
                     {statusOptions.map((status) => (
                       <option key={status} value={status}>
-                        {formatOptionLabel(status)}
+                        {getOptionLabel(t, "status", status)}
                       </option>
                     ))}
                   </select>
@@ -1311,7 +1319,7 @@ const Post = () => {
                     onChange={(e) => setSelectedLocation(e.target.value)}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
                   >
-                    <option value="all">All Locations</option>
+                    <option value="all">{t.filters.allLocations}</option>
                     {locations.map((location) => (
                       <option key={location} value={location}>
                         {location}
@@ -1329,36 +1337,46 @@ const Post = () => {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mb-6 flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center rounded-full border border-cyan-100 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">
-              Showing {filteredPosts.length} loaded posts
+              {t.common.showing} {filteredPosts.length}{" "}
+              {getLoadedPostsLabel(filteredPosts.length, t)}
             </span>
 
             {isAdmin && (
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 shadow-sm">
                 <ShieldCheck className="h-4 w-4" />
-                Full admin access
+                {t.common.fullAdminAccess}
               </span>
             )}
 
             {!isAdmin && isClient && currentSubscription && (
               <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 shadow-sm">
                 <Gauge className="h-4 w-4" />
-                Posts: {clientUsage.usedPosts} / {formatLimit(casePostLimit)}
+                {t.badges.clientPosts}: {clientUsage.usedPosts} /{" "}
+                {formatLimit(casePostLimit, t, locale)}
               </span>
             )}
 
             {!isAdmin && isLawyer && currentSubscription && (
               <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 shadow-sm">
                 <WalletCards className="h-4 w-4" />
-                Proposals: {formatLimit(proposalLimit)}
+                {t.badges.lawyerProposals}:{" "}
+                {formatLimit(proposalLimit, t, locale)}
               </span>
             )}
 
             {postsMeta.hasNextPage && selectedStatus !== "all" && (
               <span className="inline-flex items-center rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-bold text-cyan-700 shadow-sm">
-                More posts available
+                {t.common.morePostsAvailable}
               </span>
             )}
           </div>
+
+          {subscriptionError && isLoggedIn && !isAdmin && (
+            <div className="mb-6 flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-700">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              {subscriptionError}
+            </div>
+          )}
 
           {successMessage && (
             <div className="mb-6 flex gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-700">
@@ -1374,7 +1392,7 @@ const Post = () => {
                 <p>{error}</p>
                 {lastRequestUrl && (
                   <p className="mt-1 break-all text-xs text-red-600">
-                    Request: {lastRequestUrl}
+                    {t.common.request}: {lastRequestUrl}
                   </p>
                 )}
               </div>
@@ -1386,7 +1404,7 @@ const Post = () => {
               <div className="text-center">
                 <Loader2 className="mx-auto mb-4 h-11 w-11 animate-spin text-cyan-700" />
                 <p className="text-sm font-black text-slate-600">
-                  Loading case posts...
+                  {t.loading.posts}
                 </p>
               </div>
             </div>
@@ -1423,7 +1441,7 @@ const Post = () => {
                               post.status
                             )}`}
                           >
-                            {post.status?.replace("_", " ") || "open"}
+                            {getOptionLabel(t, "status", post.status || "open")}
                           </span>
                         </div>
 
@@ -1434,11 +1452,13 @@ const Post = () => {
 
                           <div className="min-w-0 pt-1">
                             <p className="inline-flex items-center rounded-full bg-white px-3 py-1.5 text-xs font-black capitalize text-cyan-700 ring-1 ring-cyan-100">
-                              {post.category || "Legal Post"}
+                              {post.category
+                                ? getOptionLabel(t, "category", post.category)
+                                : t.card.legalPost}
                             </p>
 
                             <h2 className="mt-3 line-clamp-2 text-xl font-black tracking-tight text-slate-950">
-                              {post.title || "Untitled Post"}
+                              {post.title || t.card.untitledPost}
                             </h2>
                           </div>
                         </div>
@@ -1451,40 +1471,41 @@ const Post = () => {
                               post.urgency
                             )}`}
                           >
-                            {post.urgency || "medium"} urgency
+                            {getOptionLabel(t, "urgency", post.urgency || "medium")}{" "}
+                            {t.card.urgencySuffix}
                           </span>
 
                           {Number(post.isPriority) === 1 && (
                             <span className="rounded-full border border-amber-200 bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
-                              Priority
+                              {t.common.priority}
                             </span>
                           )}
                         </div>
 
                         <p className="line-clamp-3 min-h-[72px] text-sm font-medium leading-6 text-slate-500">
-                          {post.description || "No description provided."}
+                          {post.description || t.card.noDescription}
                         </p>
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="rounded-3xl border border-cyan-100 bg-cyan-50/60 p-4">
                             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-cyan-700">
                               <User className="h-4 w-4" />
-                              Client
+                              {t.card.client}
                             </div>
 
                             <p className="mt-2 truncate text-sm font-black text-slate-950">
-                              {post.client?.name || "Anonymous"}
+                              {post.client?.name || t.common.anonymous}
                             </p>
                           </div>
 
                           <div className="rounded-3xl border border-cyan-100 bg-cyan-50/60 p-4">
                             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-cyan-700">
                               <BadgeDollarSign className="h-4 w-4" />
-                              Budget
+                              {t.card.budget}
                             </div>
 
                             <p className="mt-2 truncate text-sm font-black text-slate-950">
-                              {formatBudget(post.budgetMin, post.budgetMax)}
+                              {formatBudget(post.budgetMin, post.budgetMax, t, locale)}
                             </p>
                           </div>
                         </div>
@@ -1493,29 +1514,29 @@ const Post = () => {
                           <div className="flex items-center justify-between gap-4">
                             <span className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                               <MapPin className="h-4 w-4" />
-                              Location
+                              {t.card.location}
                             </span>
 
                             <span className="max-w-[170px] truncate text-sm font-black text-slate-800">
-                              {location || "Not specified"}
+                              {location || t.common.notSpecified}
                             </span>
                           </div>
 
                           <div className="flex items-center justify-between gap-4">
                             <span className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                               <CalendarDays className="h-4 w-4" />
-                              Posted
+                              {t.card.posted}
                             </span>
 
                             <span className="text-sm font-black text-slate-800">
-                              {formatDate(post.createdAt)}
+                              {formatDate(post.createdAt, t, locale)}
                             </span>
                           </div>
 
                           <div className="flex items-center justify-between gap-4">
                             <span className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                               <FileText className="h-4 w-4" />
-                              Proposals
+                              {t.card.proposals}
                             </span>
 
                             <span className="text-sm font-black text-slate-800">
@@ -1530,7 +1551,7 @@ const Post = () => {
                             className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-800 transition hover:bg-slate-100"
                           >
                             <FileText className="h-4 w-4" />
-                            Details
+                            {t.common.details}
                           </Link>
 
                           {actionState.type === "login" && !isClient && !isAdmin && (
@@ -1539,7 +1560,7 @@ const Post = () => {
                               className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-cyan-700 px-4 py-3 text-sm font-black text-white transition hover:bg-cyan-800"
                             >
                               <LogIn className="h-4 w-4" />
-                              Login
+                              {t.common.login}
                             </Link>
                           )}
 
@@ -1585,7 +1606,7 @@ const Post = () => {
                     ) : (
                       <RefreshCcw className="h-4 w-4" />
                     )}
-                    Load More
+                    {t.common.loadMore}
                   </button>
                 </div>
               )}
@@ -1597,12 +1618,11 @@ const Post = () => {
               </div>
 
               <h3 className="mt-5 text-2xl font-black text-slate-950">
-                No posts found
+                {t.empty.title}
               </h3>
 
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-                No legal case post matched your current search or filter
-                options.
+                {t.empty.description}
               </p>
 
               <button
@@ -1611,7 +1631,7 @@ const Post = () => {
                 className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-700 px-5 py-3 text-sm font-black text-white transition hover:bg-cyan-800"
               >
                 <RefreshCcw className="h-4 w-4" />
-                Clear Filters
+                {t.common.clearFilters}
               </button>
             </div>
           )}
@@ -1635,14 +1655,16 @@ const Post = () => {
               <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-cyan-100 bg-white/95 px-6 py-5 backdrop-blur">
                 <div>
                   <h2 className="text-2xl font-black text-slate-950">
-                    Create Case Post
+                    {t.createModal.title}
                   </h2>
                   <p className="mt-1 text-sm font-semibold text-slate-500">
                     {isAdmin
-                      ? "Admin access unlocked"
-                      : `Your limit: ${clientUsage.usedPosts} / ${formatLimit(
-                          casePostLimit
-                        )} posts`}
+                      ? t.common.adminAccessUnlocked
+                      : `${t.createModal.yourLimit}: ${clientUsage.usedPosts} / ${formatLimit(
+                          casePostLimit,
+                          t,
+                          locale
+                        )} ${t.common.posts}`}
                   </p>
                 </div>
 
@@ -1661,7 +1683,7 @@ const Post = () => {
                   <div className="rounded-3xl border border-amber-100 bg-amber-50 p-5">
                     <div className="flex gap-3 text-sm font-bold leading-6 text-amber-800">
                       <LogIn className="mt-0.5 h-5 w-5 shrink-0" />
-                      <span>Please login first to create a case post.</span>
+                      <span>{t.createModal.loginMessage}</span>
                     </div>
 
                     <Link
@@ -1669,7 +1691,7 @@ const Post = () => {
                       className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-cyan-700 px-5 py-3 text-sm font-black text-white transition hover:bg-cyan-800"
                     >
                       <LogIn className="h-4 w-4" />
-                      Login
+                      {t.common.login}
                     </Link>
                   </div>
                 ) : (
@@ -1677,10 +1699,10 @@ const Post = () => {
                     {isAdmin && (
                       <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
                         <p className="text-sm font-black text-emerald-900">
-                          Admin Mode
+                          {t.common.adminMode}
                         </p>
                         <p className="mt-1 text-xs font-semibold text-emerald-700">
-                          Subscription and post limits are unlocked for admin.
+                          {t.createModal.adminText}
                         </p>
                       </div>
                     )}
@@ -1688,13 +1710,14 @@ const Post = () => {
                     {!isAdmin && currentSubscription && (
                       <div className="rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3">
                         <p className="text-sm font-black text-cyan-900">
-                          Active Plan: {subscriptionPlanName || "Current Plan"}
+                          {t.createModal.activePlan}:{" "}
+                          {subscriptionPlanName || t.common.currentPlan}
                         </p>
                         <p className="mt-1 text-xs font-semibold text-cyan-700">
-                          Remaining posts:{" "}
+                          {t.createModal.remainingPosts}:{" "}
                           {isUnlimitedValue(casePostLimit)
-                            ? "Unlimited"
-                            : casePostRemaining}
+                            ? t.common.unlimited
+                            : Number(casePostRemaining).toLocaleString(locale)}
                         </p>
                       </div>
                     )}
@@ -1703,8 +1726,8 @@ const Post = () => {
                       <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
                         {createPostError ||
                           (isPaidSubscription
-                            ? "Your case post limit is reached for this subscription period."
-                            : "Your plan does not have enough case post access.")}
+                            ? t.errors.paidLimitReached
+                            : t.errors.notEnoughPostAccess)}
                       </div>
                     )}
 
@@ -1716,27 +1739,27 @@ const Post = () => {
 
                     <div>
                       <label className="mb-2 block text-sm font-black text-slate-700">
-                        Title *
+                        {t.createModal.titleLabel}
                       </label>
                       <input
                         name="title"
                         value={createPostForm.title}
                         onChange={handleCreatePostChange}
-                        placeholder="Example: Need help with property dispute"
+                        placeholder={t.createModal.titlePlaceholder}
                         className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                       />
                     </div>
 
                     <div>
                       <label className="mb-2 block text-sm font-black text-slate-700">
-                        Description *
+                        {t.createModal.descriptionLabel}
                       </label>
                       <textarea
                         name="description"
                         rows={5}
                         value={createPostForm.description}
                         onChange={handleCreatePostChange}
-                        placeholder="Describe your legal issue..."
+                        placeholder={t.createModal.descriptionPlaceholder}
                         className="w-full resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                       />
                     </div>
@@ -1744,7 +1767,7 @@ const Post = () => {
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Category
+                          {t.createModal.categoryLabel}
                         </label>
                         <select
                           name="category"
@@ -1752,9 +1775,9 @@ const Post = () => {
                           onChange={handleCreatePostChange}
                           className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold capitalize outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                         >
-                          {postCategoryOptions.map((category) => (
+                          {categoryOptions.map((category) => (
                             <option key={category} value={category}>
-                              {category}
+                              {getOptionLabel(t, "category", category)}
                             </option>
                           ))}
                         </select>
@@ -1762,7 +1785,7 @@ const Post = () => {
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Urgency
+                          {t.createModal.urgencyLabel}
                         </label>
                         <select
                           name="urgency"
@@ -1772,7 +1795,7 @@ const Post = () => {
                         >
                           {postUrgencyOptions.map((urgency) => (
                             <option key={urgency} value={urgency}>
-                              {urgency}
+                              {getOptionLabel(t, "urgency", urgency)}
                             </option>
                           ))}
                         </select>
@@ -1780,7 +1803,7 @@ const Post = () => {
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Minimum Budget
+                          {t.createModal.minBudgetLabel}
                         </label>
                         <input
                           type="number"
@@ -1795,7 +1818,7 @@ const Post = () => {
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Maximum Budget
+                          {t.createModal.maxBudgetLabel}
                         </label>
                         <input
                           type="number"
@@ -1810,33 +1833,33 @@ const Post = () => {
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Division
+                          {t.createModal.divisionLabel}
                         </label>
                         <input
                           name="division"
                           value={createPostForm.division}
                           onChange={handleCreatePostChange}
-                          placeholder="Example: Dhaka"
+                          placeholder={t.createModal.divisionPlaceholder}
                           className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                         />
                       </div>
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          District
+                          {t.createModal.districtLabel}
                         </label>
                         <input
                           name="district"
                           value={createPostForm.district}
                           onChange={handleCreatePostChange}
-                          placeholder="Example: Dhaka"
+                          placeholder={t.createModal.districtPlaceholder}
                           className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                         />
                       </div>
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Expires At
+                          {t.createModal.expiresAtLabel}
                         </label>
                         <input
                           type="date"
@@ -1849,13 +1872,13 @@ const Post = () => {
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Documents
+                          {t.createModal.documentsLabel}
                         </label>
                         <input
                           name="documents"
                           value={createPostForm.documents}
                           onChange={handleCreatePostChange}
-                          placeholder="Comma separated document URLs"
+                          placeholder={t.createModal.documentsPlaceholder}
                           className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                         />
                       </div>
@@ -1868,7 +1891,7 @@ const Post = () => {
                         disabled={createPostSubmitting}
                         className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                       >
-                        Cancel
+                        {t.common.cancel}
                       </button>
 
                       {showClientUpgrade && !isPaidSubscription && (
@@ -1877,7 +1900,7 @@ const Post = () => {
                           className="inline-flex items-center gap-2 rounded-2xl bg-amber-500 px-5 py-3 text-sm font-black text-white hover:bg-amber-600"
                         >
                           <Crown className="h-4 w-4" />
-                          Upgrade Plan
+                          {t.createModal.upgradePlan}
                         </Link>
                       )}
 
@@ -1894,7 +1917,7 @@ const Post = () => {
                         ) : (
                           <PlusCircle className="h-4 w-4" />
                         )}
-                        Create Post
+                        {t.common.createPost}
                       </button>
                     </div>
                   </>
@@ -1922,14 +1945,18 @@ const Post = () => {
               <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-cyan-100 bg-white/95 px-6 py-5 backdrop-blur">
                 <div>
                   <h2 className="text-2xl font-black text-slate-950">
-                    Send Proposal
+                    {t.bidModal.title}
                   </h2>
                   <p className="mt-1 text-sm font-semibold text-slate-500">
                     {isAdmin
-                      ? "Admin access unlocked"
-                      : `Plan: ${
-                          subscriptionPlanName || "Active plan"
-                        } • Proposal limit: ${formatLimit(proposalLimit)}`}
+                      ? t.common.adminAccessUnlocked
+                      : `${t.common.plan}: ${
+                          subscriptionPlanName || t.common.activePlan
+                        } • ${t.bidModal.proposalLimit}: ${formatLimit(
+                          proposalLimit,
+                          t,
+                          locale
+                        )}`}
                   </p>
                 </div>
 
@@ -1948,7 +1975,7 @@ const Post = () => {
                   <div className="rounded-3xl border border-amber-100 bg-amber-50 p-5">
                     <div className="flex gap-3 text-sm font-bold leading-6 text-amber-800">
                       <LogIn className="mt-0.5 h-5 w-5 shrink-0" />
-                      <span>Please login first to send a proposal.</span>
+                      <span>{t.bidModal.loginMessage}</span>
                     </div>
 
                     <Link
@@ -1956,7 +1983,7 @@ const Post = () => {
                       className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-cyan-700 px-5 py-3 text-sm font-black text-white transition hover:bg-cyan-800"
                     >
                       <LogIn className="h-4 w-4" />
-                      Login
+                      {t.common.login}
                     </Link>
                   </div>
                 ) : (
@@ -1971,19 +1998,19 @@ const Post = () => {
 
                       {isAdmin && (
                         <p className="mt-2 text-xs font-bold text-emerald-700">
-                          Admin access is unlocked for this action.
+                          {t.common.adminAccessUnlocked}
                         </p>
                       )}
 
                       {!isAdmin && contactUnlock && (
                         <p className="mt-2 text-xs font-bold text-cyan-800">
-                          Contact unlock is included in your active plan.
+                          {t.bidModal.contactUnlock}
                         </p>
                       )}
 
                       {!isAdmin && inAppMessaging && (
                         <p className="mt-1 text-xs font-bold text-cyan-800">
-                          In-app messaging is included in your active plan.
+                          {t.bidModal.inAppMessaging}
                         </p>
                       )}
                     </div>
@@ -2003,7 +2030,7 @@ const Post = () => {
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Proposed Fee *
+                          {t.bidModal.proposedFeeLabel}
                         </label>
                         <input
                           type="number"
@@ -2011,14 +2038,14 @@ const Post = () => {
                           min="0"
                           value={bidForm.proposedFee}
                           onChange={handleBidFormChange}
-                          placeholder="Example: 5000"
+                          placeholder={t.bidModal.proposedFeePlaceholder}
                           className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                         />
                       </div>
 
                       <div>
                         <label className="mb-2 block text-sm font-black text-slate-700">
-                          Estimated Days *
+                          {t.bidModal.estimatedDaysLabel}
                         </label>
                         <input
                           type="number"
@@ -2026,7 +2053,7 @@ const Post = () => {
                           min="1"
                           value={bidForm.estimatedDays}
                           onChange={handleBidFormChange}
-                          placeholder="Example: 7"
+                          placeholder={t.bidModal.estimatedDaysPlaceholder}
                           className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                         />
                       </div>
@@ -2034,14 +2061,14 @@ const Post = () => {
 
                     <div>
                       <label className="mb-2 block text-sm font-black text-slate-700">
-                        Message *
+                        {t.bidModal.messageLabel}
                       </label>
                       <textarea
                         name="message"
                         rows={5}
                         value={bidForm.message}
                         onChange={handleBidFormChange}
-                        placeholder="Explain how you can help this client..."
+                        placeholder={t.bidModal.messagePlaceholder}
                         className="w-full resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                       />
                     </div>
@@ -2053,7 +2080,7 @@ const Post = () => {
                         disabled={bidSubmitting}
                         className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                       >
-                        Cancel
+                        {t.common.cancel}
                       </button>
 
                       <button
@@ -2066,7 +2093,7 @@ const Post = () => {
                         ) : (
                           <Send className="h-4 w-4" />
                         )}
-                        Send Proposal
+                        {t.common.sendProposal}
                       </button>
                     </div>
                   </>
