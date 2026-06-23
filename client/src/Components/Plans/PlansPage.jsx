@@ -810,13 +810,6 @@ const PlansPage = () => {
             {selectedRoleLabel}
           </div>
 
-          <h1 className="text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
-            Choose Your Legal Service Package
-          </h1>
-
-          <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-            Select your package and continue to a secure payment page.
-          </p>
         </motion.header>
 
         <CurrentSubscriptionStrip
